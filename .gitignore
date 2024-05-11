@@ -78,3 +78,5 @@ rust-project.json
 .ionide
 
 ### Custom ###
+maelstrom/**
+store/**
