@@ -3,10 +3,10 @@
 This is a Rust based implementation of distributed system challenges conducted using the [Maelstrom](https://github.com/jepsen-io/maelstrom/tree/main) workbench.
 
 ## Setup
-* [JDK 11+](https://docs.aws.amazon.com/corretto/latest/corretto-17-ug/downloads-list.html), runtime for Clojure (language for Maelstrom)
-* Install other dependencies (`apt install graphviz gnuplot`)
-* [Rust](https://www.rust-lang.org/tools/install)
-* Run `./bootstrap.sh` to extract the Maelstrom library and compile the test program.
+* Make to have [JDK 11+](https://docs.aws.amazon.com/corretto/latest/corretto-17-ug/downloads-list.html), runtime for Clojure (language for Maelstrom).
+* Install other dependencies (`apt install graphviz gnuplot`).
+* Get [Rust](https://www.rust-lang.org/tools/install).
+* Run `./bootstrap.sh` to extract the Maelstrom binary (included) and compile the test program.
 
 Reference the [prerequisite page](https://github.com/jepsen-io/maelstrom/blob/main/doc/01-getting-ready/index.md#prerequisites) on Maelstrom for more details.
 
