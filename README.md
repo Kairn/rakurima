@@ -14,8 +14,10 @@ Reference the [prerequisite page](https://github.com/jepsen-io/maelstrom/blob/ma
 *Make sure to review the setup steps and complete them correctly before proceeding.*
 
 ## Design
+TODO
 
 ## References
 * [Maelstrom protocol specifications](https://github.com/jepsen-io/maelstrom/blob/main/doc/protocol.md)
-* [Challenge specifications](https://fly.io/dist-sys/1/)
+* [Official challenges](https://github.com/jepsen-io/maelstrom/tree/main/doc)
+* [Fly.io notes](https://fly.io/dist-sys/1/)
 * [Jon's implementation on YouTube](https://www.youtube.com/watch?v=gboGyccRVXI)
