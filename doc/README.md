@@ -47,4 +47,4 @@ A workload that increments and decrements an integer value stored on the server.
 A workload that maintains a replicated log stream. This will also rely on the internal state machine. Despite of their similarity, the client-facing Kafka log and commit history are separate from the internal replicated command log so that the server can handle different requests at the same time and maintain an arbitrary number of states.
 
 ### Transaction RW Register
-A workload that simulates a transaction based, distributed key-value store. The implementation is still based on executing requested commands on the internal state machine.
+A workload that simulates a transaction-based, distributed key-value store. The implementation is still based on executing requested commands on the internal state machine.
