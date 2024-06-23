@@ -22,7 +22,7 @@ All outgoing communications are sent via channel to the STDOUT thread to be prin
 ## Rakurima State Machine Specifications
 The internal state machine for Rakurima is roughly based on the [Raft paper](https://raft.github.io/raft.pdf) for leader election and log replication, and it has the same guarantees in principle. Due to the nature of being inside a Maelstrom cluster, a few adjustments/simplifications have been made. Notably:
 * Membership change is not supported. Nodes can be shutdown and brought back up, but no new nodes can be added. In other words, every server only agrees to the configuration given by the init message.
-* The first node (`n1`) will be the de-facto leader upon startup. Elections are only held thereafter should `n1` becomes unavailable or sufficiently isolated.
+* The first node (`n0`) will be the de-facto leader upon startup. Elections are only held thereafter should `n0` becomes unavailable or sufficiently isolated.
 * All writes are handled by the leader only, but reads are served locally from each node's internal state. In other words, we prefer better availability and balanced load over stronger consistency.
 * Log compaction and snapshot transfer are not supported. This is largely due to no support for membership change. Every node participates from the start so they are expected to catch up via log replication and execution alone.
 

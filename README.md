@@ -13,6 +13,27 @@ Reference the [prerequisite page](https://github.com/jepsen-io/maelstrom/blob/ma
 ## Testing
 *Make sure to review the setup steps and complete them correctly before proceeding.*
 
+Use the following command template to run a Maelstrom workload against the server in the repository root.
+```
+./maelstrom/maelstrom test -w [WORKLOAD] --bin ./rakurima/target/debug/server --node-count [NODE_COUNT] --time-limit [TIME_LIMIT]
+```
+
+To debug, use the following command after a run, then open http://localhost:8080/.
+```
+./maelstrom/maelstrom serve
+```
+Server logs (printed to stderr) can be found under `./store/latest/node-logs`.
+
+The following environment variables can be supplied to the test program.
+* `BASE_PAUSE_TIME_MS` - The (base) sleep time of the Rakurima worker thread in milliseconds, default to 10.
+
+The following workloads are supported.
+
+### Echo
+```
+./maelstrom/maelstrom test -w echo --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
+```
+
 ## Design
 Rakurima is designed to be an all-encompassing and non-blocking server that handles Maelstrom workloads with partition tolerance.
 * **All-encompassing** - There is only a single server binary that contains logic to process different types of requests, even concurrently without being incorrect.

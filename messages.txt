@@ -1,2 +1,5 @@
 # Sample init
-{"src":"m","dest":"n1","body":{"type":"init","msg_id":1,"node_id":"n3","node_ids":["n1","n2","n3"]}}
+{"src":"ct","dest":"n1","body":{"type":"init","msg_id":1,"node_id":"n1","node_ids":["n1","n2","n3"]}}
+
+# Sample echo
+{"src":"ct","dest":"n1","body":{"type":"echo","msg_id":33,"echo":"Please echo 33"}}
