@@ -99,6 +99,8 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Reads and parses out a numeric value from an environment variable key.
+/// The given default will be returned if the key is missing or the value is invalid.
 fn get_numeric_environment_variable(
     logger: &'static Logger,
     key: &str,

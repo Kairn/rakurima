@@ -9,6 +9,7 @@ pub struct Message {
 }
 
 impl Message {
+    /// Based on the incoming message, craft a response with the appropriate meta information.
     pub fn into_response(message: Self, payload: Payload, msg_id: Option<usize>) -> Self {
         Self {
             src: message.dst,

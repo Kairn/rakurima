@@ -32,6 +32,7 @@ impl InputHandler {
         }
     }
 
+    /// Continues to read (block if needed) input lines from stdin and handles them based on the message.
     pub fn handle_input(&mut self) -> anyhow::Result<()> {
         let stdin_lines = stdin().lines();
 
@@ -99,6 +100,8 @@ impl OutputHandler {
         }
     }
 
+    /// Continues to receive messages sent from upstream and write them to stdout.
+    /// A trailing new line is always appended after each message.
     pub fn handle_output(&mut self) -> anyhow::Result<()> {
         let mut stdout = stdout().lock();
 

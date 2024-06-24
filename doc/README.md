@@ -38,10 +38,12 @@ This workload requests unique IDs from the server. For simplicity, we don't rely
 ### Message Broadcast
 The workload that announces messages to the server. In cluster mode, the messages need to propagate to every node with eventual-consistency. Because message propagation is idempotent in this scenario (i.e. we persist a set of integers on each server) without side effects, the implementation does not depend on the internal state machine. A simple gossip strategy is used to deliver the broadcast where every node is connected to a few peers.
 
-The way that the peers are chosen is deterministic (Topology messages are ignored). The number of peers will be a fraction of the total number of nodes in the cluster so that it is redundant enough to tolerate a small amount of communication failures. In addition, broadcast will be retried a few times until a response is heard from the peer. A node will only forward messages not already seen to prevent a loop. A node will respond to a peer's broadcast whether it already has the message or not to signal a retry is not needed.
+The way that the peers are chosen is deterministic based on the "Topology" message from the Maelstrom client. Broadcast will be retried a few times until a response is heard from the peer. A node will only forward messages not already seen to prevent a loop. A node will respond to a peer's broadcast whether it already has the message or not to signal a retry is not needed.
 
 ### PN Counters
 A workload that increments and decrements an integer value stored on the server. To guarantee correctness, we must enforce once and only-once execution of the update commands. This process will ride on the back of the internal state machine. Each increment/decrement command will be treated as an execution log to be replicated to other server nodes, and they are executed once a consensus is achieved.
+
+Due to that the "read" message in this workload has an identical type as the Broadcast workload, we rely on the presence of the "Topology" message to determine whether the server will respond with the broadcast set or the PN counter value (default without a topology message).
 
 ### Kafka
 A workload that maintains a replicated log stream. This will also rely on the internal state machine. Despite of their similarity, the client-facing Kafka log and commit history are separate from the internal replicated command log so that the server can handle different requests at the same time and maintain an arbitrary number of states.

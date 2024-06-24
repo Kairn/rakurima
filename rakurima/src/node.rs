@@ -15,6 +15,7 @@ pub enum NodeMode {
 }
 
 impl NodeMode {
+    /// Constructs the NodeMode based on the list of neighbors.
     pub fn from_node_ids(node_ids: Vec<String>) -> Self {
         if (node_ids.len() > 1) {
             NodeMode::Cluster(node_ids)
