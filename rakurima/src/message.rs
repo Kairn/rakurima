@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,5 +53,18 @@ pub enum Payload {
     },
     EchoOk {
         echo: String,
+    },
+    Topology {
+        topology: HashMap<String, Vec<String>>,
+    },
+    TopologyOk {},
+    Broadcast {
+        message: i32,
+    },
+    BroadcastOk {},
+    Read {},
+    ReadOk {
+        messages: Option<Vec<i32>>, // For broadcast workload.
+        value: Option<i32>,         // For PN counter workload.
     },
 }

@@ -54,16 +54,20 @@ impl InputHandler {
 
     fn handle_message(&mut self, message: Message) -> anyhow::Result<()> {
         match &message.body.payload {
+            Error { code, text } => {
+                // Swallow the error to prevent loop.
+                self.logger
+                    .log_debug(&format!("Swallowed error message: {code} @ {text}."));
+            }
             Echo { echo } => {
                 let echo = echo.to_string();
                 // Send back the echo response.
                 self.out_sender
                     .send(Message::into_response(message, EchoOk { echo }, None))?
             }
-            Error { code, text } => {
-                // Swallow the error to prevent loop.
-                self.logger
-                    .log_debug(&format!("Swallowed error message: {code} @ {text}."));
+            Topology { .. } | Broadcast { .. } | BroadcastOk {} => {
+                // Send these messages over to the server for further processing.
+                self.in_sender.send(message)?;
             }
             _ => {
                 // Unexpected, respond with an error.

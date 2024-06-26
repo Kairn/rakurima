@@ -14,8 +14,10 @@ use message::Payload::*;
 use message::{Body, Message};
 use node::{Node, NodeConfig, NodeMode};
 use rakurima::*;
+use util::get_numeric_environment_variable;
 
 const DEF_BASE_PAUSE_TIME_MS: usize = 10;
+const DEF_BASE_BROADCAST_RETRY_MS: usize = 200;
 
 fn main() -> anyhow::Result<()> {
     let logger: &'static Logger = Box::leak(Box::new(Logger {}));
@@ -24,6 +26,11 @@ fn main() -> anyhow::Result<()> {
     // Retrieve environment variables.
     let base_pause_time_ms =
         get_numeric_environment_variable(logger, "BASE_PAUSE_TIME_MS", DEF_BASE_PAUSE_TIME_MS);
+    let base_broadcast_retry_ms = get_numeric_environment_variable(
+        logger,
+        "BASE_BROADCAST_RETRY_MS",
+        DEF_BASE_BROADCAST_RETRY_MS,
+    );
 
     let stdin = stdin().lock();
     let mut stdout = stdout().lock();
@@ -60,7 +67,7 @@ fn main() -> anyhow::Result<()> {
             break Node::new(
                 node_id,
                 NodeMode::from_node_ids(node_ids),
-                NodeConfig::new(base_pause_time_ms),
+                NodeConfig::new(base_pause_time_ms, base_broadcast_retry_ms),
                 logger,
                 in_receiver,
                 out_sender.clone(),
@@ -97,31 +104,4 @@ fn main() -> anyhow::Result<()> {
     server_node.orchestrate()?;
 
     Ok(())
-}
-
-/// Reads and parses out a numeric value from an environment variable key.
-/// The given default will be returned if the key is missing or the value is invalid.
-fn get_numeric_environment_variable(
-    logger: &'static Logger,
-    key: &str,
-    default_val: usize,
-) -> usize {
-    match env::var(key) {
-        Ok(val) => match val.parse() {
-            Ok(v) => {
-                logger.log_debug(&format!("{key}: set to value: {v}."));
-                v
-            }
-            Err(_) => {
-                logger.log_debug(&format!(
-                    "{key}: parsing failed for value: {val}. Using default: {default_val}."
-                ));
-                default_val
-            }
-        },
-        Err(_) => {
-            logger.log_debug(&format!("{key}: not found. Using default: {default_val}."));
-            default_val
-        }
-    }
 }

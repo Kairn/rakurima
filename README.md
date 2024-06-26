@@ -26,6 +26,7 @@ Server logs (printed to stderr) can be found under `./store/latest/node-logs`.
 
 The following environment variables can be supplied to the test program.
 * `BASE_PAUSE_TIME_MS` - The (base) sleep time of the Rakurima worker thread in milliseconds, default to 10.
+* `BASE_BROADCAST_RETRY_MS` - The (base) timeout in milliseconds before a broadcast is retried, default to 200.
 
 The following workloads are supported.
 
