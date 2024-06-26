@@ -84,13 +84,14 @@ impl Node {
         }
     }
 
+    // Returns the ID (e.g. `n1`) of this node as a string slice.
     pub fn get_node_id(&self) -> &str {
         &self.node_id
     }
 
     /// Starts the server's routine.
     pub fn orchestrate(&mut self) -> anyhow::Result<()> {
-        let node_id = self.node_id.as_str().to_string();
+        let node_id = self.node_id.clone();
         let mut clock = SystemTime::now();
         let mut next_debug_log_time = clock.duration_since(UNIX_EPOCH)?.as_millis();
 
