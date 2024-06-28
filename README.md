@@ -15,7 +15,7 @@ Reference the [prerequisite page](https://github.com/jepsen-io/maelstrom/blob/ma
 
 Use the following command template to run a Maelstrom workload against the server in the repository root.
 ```
-./maelstrom/maelstrom test -w <WORKLOAD> --bin ./rakurima/target/debug/server --node-count <NODE_COUNT> --time-limit <TIME_LIMIT>
+./maelstrom/maelstrom test -w <WORKLOAD> --bin ./rakurima/target/debug/server --node-count <NODE_COUNT> --time-limit <TIME_LIMIT> [OPTIONS]
 ```
 
 To debug, use the following command after a run, then open http://localhost:8080/.
@@ -33,6 +33,11 @@ The following workloads are supported.
 ### Echo
 ```
 ./maelstrom/maelstrom test -w echo --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
+```
+
+### Broadcast (single node)
+```
+./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 1 --time-limit 30 --rate 50
 ```
 
 ## Design

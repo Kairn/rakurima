@@ -65,7 +65,7 @@ impl InputHandler {
                 self.out_sender
                     .send(Message::into_response(message, EchoOk { echo }, None))?
             }
-            Topology { .. } | Broadcast { .. } | BroadcastOk {} => {
+            Topology { .. } | Broadcast { .. } | BroadcastOk {} | Read {} => {
                 // Send these messages over to the server for further processing.
                 self.in_sender.send(message)?;
             }

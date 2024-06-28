@@ -1,4 +1,7 @@
-use std::env;
+use std::{
+    env,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::logger::Logger;
 
@@ -35,4 +38,12 @@ pub fn get_numeric_environment_variable(
 pub fn jitter(base: usize) -> usize {
     let fraction = rand::random::<usize>() % 11;
     base + base * fraction / 10
+}
+
+/// Returns the current system time in milliseconds.
+pub fn get_cur_time_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("System clock should be available")
+        .as_millis()
 }

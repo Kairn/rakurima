@@ -78,6 +78,9 @@ fn main() -> anyhow::Result<()> {
     };
 
     logger.log_debug(&format!("Server node: {server_node:?} initialized."));
+    if server_node.is_singleton() {
+        logger.log_debug("Node is in singleton mode.");
+    }
 
     // Drop the current I/O locks as the handler threads will be using them.
     drop(stdin_lines);
