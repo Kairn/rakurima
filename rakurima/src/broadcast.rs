@@ -88,17 +88,13 @@ impl BroadcastCore {
     /// Stores the broadcast message into the internal set.
     /// Creates a new task to send this message to its neighbors if the message is not already present.
     /// Returns whether this message is not seen before
-    pub fn store_message(&mut self, message: i32, msg_id: usize) -> bool {
+    pub fn store_message(&mut self, message: i32, msg_id: usize, src: &str) -> bool {
         if self.messages.insert(message) {
             if !self.is_singleton {
-                self.tasks.insert(
-                    msg_id,
-                    BroadcastTask::new(
-                        msg_id,
-                        message,
-                        HashSet::from_iter(self.neighbors.iter().cloned()),
-                    ),
-                );
+                let mut recipients = HashSet::from_iter(self.neighbors.iter().cloned());
+                recipients.remove(src);
+                self.tasks
+                    .insert(msg_id, BroadcastTask::new(msg_id, message, recipients));
             }
             true
         } else {

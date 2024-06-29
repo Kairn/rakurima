@@ -186,7 +186,7 @@ impl Node {
             Broadcast { message } => {
                 self.next_msg_id += 1;
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
-                    broadcast_core.store_message(message, self.next_msg_id);
+                    broadcast_core.store_message(message, self.next_msg_id, &msg.src);
 
                     // Send out the ack message on Broadcast.
                     self.out_sender

@@ -35,9 +35,14 @@ The following workloads are supported.
 ./maelstrom/maelstrom test -w echo --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
 ```
 
-### Broadcast (single node)
+### Broadcast (simple)
 ```
-./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 1 --time-limit 30 --rate 50
+./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10 --rate 10
+```
+
+### Broadcast (complex)
+```
+./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 25 --time-limit 30 --rate 100 --latency 100 --nemesis partition
 ```
 
 ## Design
