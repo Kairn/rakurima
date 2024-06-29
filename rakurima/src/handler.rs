@@ -5,14 +5,14 @@ use std::{
 };
 
 use crate::{
-    logger::{self, Logger},
+    logger::{self, ServerLogger},
     message::{self, Body, Message, Payload::*},
 };
 
 #[derive(Debug)]
 pub struct InputHandler {
     node_id: String,
-    logger: &'static Logger,
+    logger: &'static ServerLogger,
     in_sender: Sender<Message>,
     out_sender: Sender<Message>,
 }
@@ -20,7 +20,7 @@ pub struct InputHandler {
 impl InputHandler {
     pub fn new(
         node_id: String,
-        logger: &'static Logger,
+        logger: &'static ServerLogger,
         in_sender: Sender<Message>,
         out_sender: Sender<Message>,
     ) -> Self {
@@ -91,12 +91,16 @@ impl InputHandler {
 #[derive(Debug)]
 pub struct OutputHandler {
     node_id: String,
-    logger: &'static Logger,
+    logger: &'static ServerLogger,
     out_receiver: Receiver<Message>,
 }
 
 impl OutputHandler {
-    pub fn new(node_id: String, logger: &'static Logger, out_receiver: Receiver<Message>) -> Self {
+    pub fn new(
+        node_id: String,
+        logger: &'static ServerLogger,
+        out_receiver: Receiver<Message>,
+    ) -> Self {
         Self {
             node_id,
             logger,

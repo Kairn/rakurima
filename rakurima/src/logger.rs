@@ -1,8 +1,17 @@
 #[derive(Debug)]
-pub struct Logger;
+pub struct ServerLogger;
 
-impl Logger {
+impl ServerLogger {
     pub fn log_debug(&self, message: &str) {
         eprintln!("[RAKURIMA DEBUG] - {message}");
+    }
+}
+
+#[derive(Debug)]
+pub struct RaftLogger;
+
+impl RaftLogger {
+    pub fn log_debug(&self, message: &str) {
+        eprintln!("[RAFT DEBUG] - {message}");
     }
 }

@@ -3,12 +3,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::logger::Logger;
+use crate::logger::ServerLogger;
 
 /// Reads and parses out a numeric value from an environment variable key.
 /// The given default will be returned if the key is missing or the value is invalid.
 pub fn get_numeric_environment_variable(
-    logger: &'static Logger,
+    logger: &'static ServerLogger,
     key: &str,
     default_val: usize,
 ) -> usize {
@@ -46,4 +46,18 @@ pub fn get_cur_time_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("System clock should be available")
         .as_millis()
+}
+
+/// Converts a node ID (e.g. `n0`) to an index used by Raft.
+/// Simply use the numeric value after "n".
+pub fn node_id_to_raft_id(node_id: &str) -> usize {
+    node_id[1..]
+        .parse::<usize>()
+        .expect("Node ID should be valid")
+}
+
+/// Converts a raft ID to a node ID string identified by Maelstrom.
+/// Simply prepends an "n" to the numeric value.
+pub fn raft_id_to_node_id(raft_id: usize) -> String {
+    format!("n{raft_id}")
 }

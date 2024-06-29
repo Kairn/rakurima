@@ -9,18 +9,22 @@ use std::{
 
 use anyhow::Context;
 use handler::{InputHandler, OutputHandler};
-use logger::Logger;
+use logger::ServerLogger;
 use message::Payload::*;
 use message::{Body, Message};
 use node::{Node, NodeConfig, NodeMode};
+use raft::{RaftConfig, RaftCore};
 use rakurima::*;
 use util::get_numeric_environment_variable;
 
 const DEF_BASE_PAUSE_TIME_MS: usize = 10;
 const DEF_BASE_BROADCAST_RETRY_MS: usize = 200;
+const DEF_BASE_ELECTION_TIMEOUT_MS: usize = 2000;
+const DEF_BASE_HEARTBEAT_INTERVAL_MS: usize = 75;
+const DEF_BASE_REPLICATE_INTERVAL_MS: usize = 200;
 
 fn main() -> anyhow::Result<()> {
-    let logger: &'static Logger = Box::leak(Box::new(Logger {}));
+    let logger: &'static ServerLogger = Box::leak(Box::new(ServerLogger {}));
     logger.log_debug("Rakurima is starting up...");
 
     // Retrieve environment variables.
@@ -30,6 +34,21 @@ fn main() -> anyhow::Result<()> {
         logger,
         "BASE_BROADCAST_RETRY_MS",
         DEF_BASE_BROADCAST_RETRY_MS,
+    );
+    let base_election_timeout_ms = get_numeric_environment_variable(
+        logger,
+        "BASE_ELECTION_TIMEOUT_MS",
+        DEF_BASE_ELECTION_TIMEOUT_MS,
+    );
+    let base_heartbeat_interval_ms = get_numeric_environment_variable(
+        logger,
+        "BASE_HEARTBEAT_INTERVAL_MS",
+        DEF_BASE_HEARTBEAT_INTERVAL_MS,
+    );
+    let base_replicate_interval_ms = get_numeric_environment_variable(
+        logger,
+        "BASE_REPLICATE_INTERVAL_MS",
+        DEF_BASE_REPLICATE_INTERVAL_MS,
     );
 
     let stdin = stdin().lock();
@@ -64,6 +83,16 @@ fn main() -> anyhow::Result<()> {
             // Write a trailing new line.
             stdout.write_all(b"\n")?;
 
+            let raft_core = RaftCore::new(
+                RaftConfig::new(
+                    base_election_timeout_ms,
+                    base_heartbeat_interval_ms,
+                    base_replicate_interval_ms,
+                ),
+                node_id.as_str(),
+                node_ids.len(),
+            );
+
             break Node::new(
                 node_id,
                 NodeMode::from_node_ids(node_ids),
@@ -71,6 +100,7 @@ fn main() -> anyhow::Result<()> {
                 logger,
                 in_receiver,
                 out_sender.clone(),
+                raft_core,
             );
         } else {
             logger.log_debug("Non-init message during startup, ignoring...");

@@ -9,10 +9,11 @@ use std::{
 use anyhow::bail;
 
 use crate::broadcast;
+use crate::raft::RaftCore;
 use crate::util::get_cur_time_ms;
 use crate::{
     broadcast::BroadcastCore,
-    logger::Logger,
+    logger::ServerLogger,
     message::{self, Message, Payload::*},
     util::jitter,
 };
@@ -59,7 +60,7 @@ pub struct Node {
     node_id: String,
     mode: NodeMode,
     config: NodeConfig,
-    logger: &'static Logger,
+    logger: &'static ServerLogger,
 
     // Communication channels.
     in_receiver: Receiver<Message>,
@@ -70,6 +71,7 @@ pub struct Node {
 
     // Internal cores.
     broadcast_core: Option<BroadcastCore>,
+    raft_core: RaftCore,
 }
 
 impl Node {
@@ -77,9 +79,10 @@ impl Node {
         node_id: String,
         mode: NodeMode,
         config: NodeConfig,
-        logger: &'static Logger,
+        logger: &'static ServerLogger,
         in_receiver: Receiver<Message>,
         out_sender: Sender<Message>,
+        raft_core: RaftCore,
     ) -> Self {
         Self {
             node_id,
@@ -90,6 +93,7 @@ impl Node {
             out_sender,
             next_msg_id: 0,
             broadcast_core: None,
+            raft_core,
         }
     }
 
@@ -98,8 +102,15 @@ impl Node {
         &self.node_id
     }
 
+    // Checks if the node is in `Singleton` mode.
     pub fn is_singleton(&self) -> bool {
         matches!(self.mode, NodeMode::Singleton)
+    }
+
+    // Increments and returns the next message ID to be used for communication.
+    pub fn vend_msg_id(&mut self) -> usize {
+        self.next_msg_id += 1;
+        self.next_msg_id
     }
 
     /// Starts the server's routine.
@@ -184,9 +195,9 @@ impl Node {
                     .send(Message::into_response(msg, TopologyOk {}, None))?;
             }
             Broadcast { message } => {
-                self.next_msg_id += 1;
+                let next_msg_id = self.vend_msg_id();
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
-                    broadcast_core.store_message(message, self.next_msg_id, &msg.src);
+                    broadcast_core.store_message(message, next_msg_id, &msg.src);
 
                     // Send out the ack message on Broadcast.
                     self.out_sender

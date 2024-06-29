@@ -27,6 +27,9 @@ Server logs (printed to stderr) can be found under `./store/latest/node-logs`.
 The following environment variables can be supplied to the test program.
 * `BASE_PAUSE_TIME_MS` - The (base) sleep time of the Rakurima worker thread in milliseconds, default to 10.
 * `BASE_BROADCAST_RETRY_MS` - The (base) timeout in milliseconds before a broadcast is retried, default to 200.
+* `BASE_ELECTION_TIMEOUT_MS` - The (base) timeout in milliseconds before a raft node holds a new election without receiving heartbeat, default to 2000.
+* `BASE_HEARTBEAT_INTERVAL_MS` - The (base) pause time in milliseconds between leader heartbeats, default to 75.
+* `BASE_REPLICATE_INTERVAL_MS` - The (base) time in milliseconds between replication RPCs for leader, default to 200.
 
 The following workloads are supported.
 
