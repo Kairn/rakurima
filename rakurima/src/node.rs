@@ -6,9 +6,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::bail;
-
 use crate::broadcast;
+use crate::message::{Body, Payload};
+use crate::raft::RaftCommand;
 use crate::raft::RaftCore;
 use crate::util::get_cur_time_ms;
 use crate::{
@@ -17,6 +17,7 @@ use crate::{
     message::{self, Message, Payload::*},
     util::jitter,
 };
+use anyhow::bail;
 
 /// Mode of operation for the server node.
 /// In `Cluster` mode, an embedded list of peers is included.
@@ -221,6 +222,17 @@ impl Node {
                     bail!("Got broadcast_ok without initialization");
                 }
             }
+            Add { delta } => {
+                if self.raft_core.is_leader() {
+                    self.raft_core.accept_new_log(
+                        RaftCommand::UpdateCounter { delta },
+                        msg.src,
+                        msg.body.msg_id,
+                    );
+                } else {
+                    self.forward_to_leader(msg)?;
+                }
+            }
             Read {} => {
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
                     // Return broadcast messages.
@@ -234,12 +246,73 @@ impl Node {
                     self.logger.log_debug("Unexpected read at this time.");
                 }
             }
+            // Raft specific internal handling follows.
+            AppendEntries {
+                term,
+                leader_id,
+                prev_log_index,
+                prev_log_term,
+                entries,
+                leader_commit,
+            } => {
+                let result = self.raft_core.accept_entries(
+                    term,
+                    leader_id,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
+                    leader_commit,
+                );
+                self.reply_to_raft_node(result, msg.dst, msg.src)?
+            }
+            AppendEntriesResult { .. } => {}
+            RequestVote { .. } => {}
+            RequestVoteResult { .. } => {}
             _ => {
                 // Unexpected types should've never reached here from the input handler.
                 self.logger.log_debug(&format!("Server node encountered unexpected message passed from input handler: {msg:?}. Ignored."));
             }
         }
 
+        Ok(())
+    }
+
+    /// Forwards a message (client request) to the Raft leader.
+    fn forward_to_leader(&self, mut message: Message) -> anyhow::Result<()> {
+        let leader_node_id = self.raft_core.get_leader_node_id();
+        self.logger.log_debug(&format!(
+            "Forwarding message with ID: {} to leader: {}.",
+            message
+                .body
+                .msg_id
+                .expect("Client request should have msg_id"),
+            &leader_node_id
+        ));
+        message.dst = leader_node_id;
+        self.out_sender.send(message)?;
+
+        Ok(())
+    }
+
+    /// Replies to the Raft node with the given result.
+    /// The result can be a response to either `AppendEntries` or `RequestVote`.
+    fn reply_to_raft_node(
+        &self,
+        payload: Payload,
+        node_id: String,
+        dst: String,
+    ) -> anyhow::Result<()> {
+        self.logger
+            .log_debug(&format!("Replying to Raft node: {dst} with: {payload:?}"));
+        self.out_sender.send(Message {
+            src: node_id,
+            dst,
+            body: Body {
+                msg_id: None,
+                in_reply_to: None,
+                payload,
+            },
+        })?;
         Ok(())
     }
 }

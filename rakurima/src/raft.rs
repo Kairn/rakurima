@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::mpsc::Sender};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     logger::RaftLogger,
-    util::{get_cur_time_ms, jitter, node_id_to_raft_id},
+    message::{Message, Payload},
+    util::{get_cur_time_ms, jitter, node_id_to_raft_id, raft_id_to_node_id},
 };
 
 // Node `n0` will be the default leader on startup without an explicit election.
@@ -56,6 +57,9 @@ pub struct RaftLog {
     term: usize,
     index: usize, // First index is 1.
     command: RaftCommand,
+    // For client response.
+    src: String,
+    msg_id: usize,
 }
 
 #[derive(Debug)]
@@ -64,6 +68,7 @@ pub struct RaftCore {
     raft_id: usize,
     config: RaftConfig,
     logger: RaftLogger,
+    out_sender: Sender<Message>,
     is_singleton: bool,
 
     // Persistent states.
@@ -90,7 +95,12 @@ pub struct RaftCore {
 }
 
 impl RaftCore {
-    pub fn new(config: RaftConfig, node_id: &str, cluster_size: usize) -> Self {
+    pub fn new(
+        config: RaftConfig,
+        node_id: &str,
+        cluster_size: usize,
+        out_sender: Sender<Message>,
+    ) -> Self {
         let role = if node_id == DEF_LEADER_ID {
             RaftRole::Leader
         } else {
@@ -103,6 +113,7 @@ impl RaftCore {
             raft_id: node_id_to_raft_id(node_id),
             config,
             logger: RaftLogger {},
+            out_sender,
             is_singleton: cluster_size <= 1,
             cur_term: 0,
             cur_leader: 0,
@@ -118,6 +129,36 @@ impl RaftCore {
             next_heartbeat_time: 0,
             next_replicate_time: 0,
             pn_counter_value: 0,
+        }
+    }
+
+    pub fn is_leader(&self) -> bool {
+        matches!(self.role, RaftRole::Leader)
+    }
+
+    pub fn get_leader_node_id(&self) -> String {
+        raft_id_to_node_id(self.cur_leader)
+    }
+
+    /// Accepts a client update command as the leader.
+    pub fn accept_new_log(&mut self, command: RaftCommand, src: String, msg_id: Option<usize>) {
+        todo!()
+    }
+
+    pub fn accept_entries(
+        &mut self,
+        term: usize,
+        leader_id: usize,
+        prev_log_index: usize,
+        prev_log_term: usize,
+        entries: Option<Vec<RaftLog>>,
+        leader_commit: usize,
+    ) -> Payload {
+        // TODO.
+        let mut success = false;
+        Payload::AppendEntriesResult {
+            term: self.cur_leader,
+            success,
         }
     }
 }

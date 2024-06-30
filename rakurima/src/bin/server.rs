@@ -91,6 +91,7 @@ fn main() -> anyhow::Result<()> {
                 ),
                 node_id.as_str(),
                 node_ids.len(),
+                out_sender.clone(),
             );
 
             break Node::new(

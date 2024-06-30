@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::raft::RaftLog;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub src: String,
@@ -68,5 +70,32 @@ pub enum Payload {
         messages: Option<Vec<i32>>, // For broadcast workload.
         #[serde(skip_serializing_if = "Option::is_none")]
         value: Option<i32>, // For PN counter workload.
+    },
+    Add {
+        delta: i32,
+    },
+    AddOk {},
+    // Raft specific messages follows.
+    AppendEntries {
+        term: usize,
+        leader_id: usize,
+        prev_log_index: usize,
+        prev_log_term: usize,
+        entries: Option<Vec<RaftLog>>,
+        leader_commit: usize,
+    },
+    AppendEntriesResult {
+        term: usize,
+        success: bool,
+    },
+    RequestVote {
+        term: usize,
+        candidate_id: usize,
+        last_log_index: usize,
+        last_log_term: usize,
+    },
+    RequestVoteResult {
+        term: usize,
+        vote_granted: bool,
     },
 }

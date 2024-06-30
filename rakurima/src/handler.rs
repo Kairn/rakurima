@@ -65,8 +65,16 @@ impl InputHandler {
                 self.out_sender
                     .send(Message::into_response(message, EchoOk { echo }, None))?
             }
-            Topology { .. } | Broadcast { .. } | BroadcastOk {} | Read {} => {
+            Topology { .. } | Broadcast { .. } | BroadcastOk {} | Read {} | Add { .. } => {
+                // Maelstrom client/server messages.
                 // Send these messages over to the server for further processing.
+                self.in_sender.send(message)?;
+            }
+            AppendEntries { .. }
+            | AppendEntriesResult { .. }
+            | RequestVote { .. }
+            | RequestVoteResult { .. } => {
+                // Raft internal messages.
                 self.in_sender.send(message)?;
             }
             _ => {
