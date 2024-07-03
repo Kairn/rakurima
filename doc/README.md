@@ -11,11 +11,13 @@ When a node starts, it blocks to wait for the initialization message from Maelst
 The reason for using a single-threaded worker is due to the fact that every outgoing message has to be written to STDOUT in Maelstrom's simulated network. There is no "real" way to do parallel communication as in a real server networking environment. To keep the system non-blocking, the worker keeps track of a "queue" of tasks that are pending so that it may action on any of them when time is right. Tasks can include incomplete broadcast requests, pending replication requests, and others that are time-consuming.
 
 The worker thread briefly sleeps in between its working cycles, when it wakes up, it does the following:
-1. Receives new messages from the STDIN thread and action upon them. Items that are not completed immediately will be queued.
+1. Receives new messages from the STDIN thread and action upon them. Items that are not completable in a stateless way will be sent to the internal state machine.
 2. Housekeeping for the internal state machine:
-   1. If this node is leader, send out replication RPCs (functions like heartbeat too) to other nodes if the configured interval has elapsed.
-   2. If not leader, check election timeout to determine if a new election is needed.
-3. Go through the work queue and action upon tasks that are ready to make progress.
+   1. For leader, send out replication RPCs (functions like heartbeat too) to other nodes if the configured interval has elapsed.
+   2. For leader, commit entries that have been replicated to the majority of servers.
+   3. If not leader, check election timeout to determine if a new election is needed.
+   4. All nodes will apply committed entries.
+3. Go through the work queue (broadcast only as of now) and action upon tasks that are ready to make progress.
 
 All outgoing communications are sent via channel to the STDOUT thread to be printed in the order that messages are received. The STDIN thread may directly send messages to STDOUT for simple requests such as echo, bypassing the workflow loop.
 
