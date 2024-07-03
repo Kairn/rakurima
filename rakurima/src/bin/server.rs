@@ -19,8 +19,7 @@ use util::get_numeric_environment_variable;
 
 const DEF_BASE_PAUSE_TIME_MS: usize = 10;
 const DEF_BASE_BROADCAST_RETRY_MS: usize = 200;
-const DEF_BASE_ELECTION_TIMEOUT_MS: usize = 2000;
-const DEF_BASE_HEARTBEAT_INTERVAL_MS: usize = 75;
+const DEF_BASE_ELECTION_TIMEOUT_MS: usize = 3000;
 const DEF_BASE_REPLICATE_INTERVAL_MS: usize = 200;
 
 fn main() -> anyhow::Result<()> {
@@ -39,11 +38,6 @@ fn main() -> anyhow::Result<()> {
         logger,
         "BASE_ELECTION_TIMEOUT_MS",
         DEF_BASE_ELECTION_TIMEOUT_MS,
-    );
-    let base_heartbeat_interval_ms = get_numeric_environment_variable(
-        logger,
-        "BASE_HEARTBEAT_INTERVAL_MS",
-        DEF_BASE_HEARTBEAT_INTERVAL_MS,
     );
     let base_replicate_interval_ms = get_numeric_environment_variable(
         logger,
@@ -84,11 +78,7 @@ fn main() -> anyhow::Result<()> {
             stdout.write_all(b"\n")?;
 
             let raft_core = RaftCore::new(
-                RaftConfig::new(
-                    base_election_timeout_ms,
-                    base_heartbeat_interval_ms,
-                    base_replicate_interval_ms,
-                ),
+                RaftConfig::new(base_election_timeout_ms, base_replicate_interval_ms),
                 node_id.as_str(),
                 node_ids.len(),
                 out_sender.clone(),

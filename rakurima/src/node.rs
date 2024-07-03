@@ -169,6 +169,9 @@ impl Node {
                 }
             }
 
+            // Do chores on the Raft node.
+            self.raft_core.run_cycle()?;
+
             thread::sleep(Duration::from_millis(
                 jitter(self.config.base_pause_time_ms) as u64,
             ));
@@ -265,9 +268,36 @@ impl Node {
                 );
                 self.reply_to_raft_node(result, msg.dst, msg.src)?
             }
-            AppendEntriesResult { .. } => {}
-            RequestVote { .. } => {}
-            RequestVoteResult { .. } => {}
+            AppendEntriesResult {
+                term,
+                leader_id,
+                success,
+            } => {
+                self.raft_core
+                    .process_append_result(term, leader_id, success);
+            }
+            RequestVote {
+                term,
+                candidate_id,
+                last_log_index,
+                last_log_term,
+            } => {
+                let result = self.raft_core.accept_vote_request(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                );
+                self.reply_to_raft_node(result, msg.dst, msg.src)?
+            }
+            RequestVoteResult {
+                term,
+                leader_id,
+                vote_granted,
+            } => {
+                self.raft_core
+                    .process_vote_result(term, leader_id, vote_granted);
+            }
             _ => {
                 // Unexpected types should've never reached here from the input handler.
                 self.logger.log_debug(&format!("Server node encountered unexpected message passed from input handler: {msg:?}. Ignored."));

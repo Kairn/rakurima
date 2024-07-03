@@ -13,7 +13,7 @@ The reason for using a single-threaded worker is due to the fact that every outg
 The worker thread briefly sleeps in between its working cycles, when it wakes up, it does the following:
 1. Receives new messages from the STDIN thread and action upon them. Items that are not completed immediately will be queued.
 2. Housekeeping for the internal state machine:
-   1. If this node is leader, send out heartbeats to other nodes if the configured interval has elapsed.
+   1. If this node is leader, send out replication RPCs (functions like heartbeat too) to other nodes if the configured interval has elapsed.
    2. If not leader, check election timeout to determine if a new election is needed.
 3. Go through the work queue and action upon tasks that are ready to make progress.
 
@@ -24,6 +24,7 @@ The internal state machine for Rakurima is roughly based on the [Raft paper](htt
 * Membership change is not supported. Nodes can be shutdown and brought back up, but no new nodes can be added. In other words, every server only agrees to the configuration given by the init message.
 * The first node (`n0`) will be the de-facto leader upon startup. Elections are only held thereafter should `n0` becomes unavailable or sufficiently isolated.
 * All writes are handled by the leader only, but reads are served locally from each node's internal state. In other words, we prefer better availability and balanced load over stronger consistency.
+* Heartbeat and log replication is combined into the same `AppendEntries` RPC that is sent out on a schedule. New client updates will be instantly scheduled for better convergence time, but internal log realignment will be a bit slower, an acceptable trade-off given the rarity of failure events.
 * Log compaction and snapshot transfer are not supported. This is largely due to no support for membership change. Every node participates from the start so they are expected to catch up via log replication and execution alone.
 
 ## Supported Request/Workload and Implementation

@@ -86,6 +86,7 @@ pub enum Payload {
     },
     AppendEntriesResult {
         term: usize,
+        leader_id: usize,
         success: bool,
     },
     RequestVote {
@@ -96,6 +97,7 @@ pub enum Payload {
     },
     RequestVoteResult {
         term: usize,
+        leader_id: usize,
         vote_granted: bool,
     },
 }
