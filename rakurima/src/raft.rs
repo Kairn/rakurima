@@ -13,8 +13,7 @@ const DEF_LEADER_ID: &str = "n0";
 
 #[derive(Debug, Clone)]
 pub struct RequestVoteTask {
-    msg_id: String,
-    granted_by: HashSet<String>,
+    granted_by: HashSet<usize>,
 }
 
 #[derive(Debug)]
@@ -63,7 +62,7 @@ pub struct RaftCore {
     config: RaftConfig,
     logger: RaftLogger,
     out_sender: Sender<Message>,
-    is_singleton: bool,
+    cluster_size: usize,
 
     // Persistent states.
     cur_term: usize,
@@ -107,7 +106,7 @@ impl RaftCore {
             config,
             logger: RaftLogger {},
             out_sender,
-            is_singleton: cluster_size <= 1,
+            cluster_size,
             cur_term: 0,
             cur_leader_id: 0,
             role,
@@ -133,8 +132,15 @@ impl RaftCore {
     }
 
     /// Accepts a client update command as the leader.
+    /// Response won't be sent until this log is committed and applied.
     pub fn accept_new_log(&mut self, command: RaftCommand, src: String, msg_id: Option<usize>) {
-        todo!()
+        self.logs.push(RaftLog {
+            term: self.cur_term,
+            index: self.logs.len() + 1,
+            command,
+            src,
+            msg_id: msg_id.expect("Requests should always have msg_id"),
+        });
     }
 
     /// Processes the `AppendEntries` RPC from a claimed leader.
@@ -153,6 +159,7 @@ impl RaftCore {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 success: false,
+                last_log_index: 0, // Irrelevant if not success.
             };
         }
 
@@ -177,6 +184,11 @@ impl RaftCore {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 success: true,
+                last_log_index: if let Some(last_log) = self.logs.last() {
+                    last_log.index
+                } else {
+                    0
+                },
             }
         } else {
             self.logger.log_debug(&format!("Replication validation failed at previous index: {prev_log_index} and previous log term: {prev_log_term}."));
@@ -188,13 +200,18 @@ impl RaftCore {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 success: false,
+                last_log_index: 0,
             }
         }
     }
 
     /// Checks and converts the current node into a follower if the current term is less than received.
-    fn maybe_convert_to_follower(&mut self, term: usize, leader_id: usize) {
-        if term > self.cur_term {
+    /// Also convert if current node is candidate when another node is already leader with the same term.
+    /// Returns whether a conversion happened.
+    fn maybe_convert_to_follower(&mut self, term: usize, leader_id: usize) -> bool {
+        if term > self.cur_term
+            || (term == self.cur_term && matches!(self.role, RaftRole::Candidate))
+        {
             self.logger.log_debug(&format!(
                 "Converting to a follower in favor of leader: {leader_id} and term: {term}.",
             ));
@@ -203,7 +220,11 @@ impl RaftCore {
             self.cur_leader_id = leader_id;
             self.voted_for = None;
             self.request_vote_task = None;
+            self.next_election_time =
+                get_cur_time_ms() + jitter(self.config.base_election_timeout_ms) as u128;
+            return true;
         }
+        false
     }
 
     /// Checks if the log entries match the previous index and term given by the leader for replication.
@@ -221,8 +242,35 @@ impl RaftCore {
     }
 
     /// Processes the result from an `AppendEntries` request sent to another node.
-    pub fn process_append_result(&mut self, term: usize, leader_id: usize, success: bool) {
-        todo!()
+    pub fn process_append_result(
+        &mut self,
+        term: usize,
+        leader_id: usize,
+        success: bool,
+        follower_id: usize,
+        last_log_index: usize,
+    ) {
+        if !self.maybe_convert_to_follower(term, leader_id) {
+            if success {
+                // Update the follower's next index and match index to the latest.
+                *self
+                    .next_indices
+                    .get_mut(follower_id)
+                    .expect("Follower ID should always exist") = last_log_index + 1;
+                *self
+                    .match_indices
+                    .get_mut(follower_id)
+                    .expect("Follower ID should always exist") = last_log_index;
+            } else {
+                // Decrement the follower's next index to retry later.
+                // Index is guaranteed to be greater or equal to 0 at any point.
+                *self
+                    .next_indices
+                    .get_mut(follower_id)
+                    .expect("Follower ID should always exist") -= 1;
+            }
+        }
+        // Do nothing if no longer the leader.
     }
 
     /// Processes the `RequestVote` RPC from a potential candidate.
@@ -233,12 +281,78 @@ impl RaftCore {
         last_log_index: usize,
         last_log_term: usize,
     ) -> Payload {
-        todo!()
+        if term <= self.cur_term {
+            return Payload::RequestVoteResult {
+                term: self.cur_term,
+                leader_id: self.cur_leader_id,
+                vote_granted: false,
+            };
+        }
+
+        if let Some(voted_for_id) = self.voted_for {
+            if voted_for_id == candidate_id {
+                // Already granted vote, grant again since this may be a retry.
+                return Payload::RequestVoteResult {
+                    term,
+                    leader_id: self.cur_leader_id,
+                    vote_granted: true,
+                };
+            } else {
+                // Voted for another candidate, decline request.
+                return Payload::RequestVoteResult {
+                    term,
+                    leader_id: self.cur_leader_id,
+                    vote_granted: false,
+                };
+            }
+        }
+
+        let (my_last_log_index, my_last_log_term) = match self.logs.last() {
+            Some(last_log) => (last_log.index, last_log.term),
+            None => (0, self.cur_term),
+        };
+
+        // Check if the candidate's log is up to date.
+        if last_log_term > my_last_log_term
+            || (last_log_term == my_last_log_term && last_log_index >= my_last_log_index)
+        {
+            // Grant vote.
+            self.voted_for.insert(candidate_id);
+            Payload::RequestVoteResult {
+                term,
+                leader_id: self.cur_leader_id,
+                vote_granted: true,
+            }
+        } else {
+            Payload::RequestVoteResult {
+                term,
+                leader_id: self.cur_leader_id,
+                vote_granted: false,
+            }
+        }
     }
 
     /// Processes the result from an `RequestVote` request sent to another node.
-    pub fn process_vote_result(&mut self, term: usize, leader_id: usize, vote_granted: bool) {
-        todo!()
+    pub fn process_vote_result(
+        &mut self,
+        term: usize,
+        leader_id: usize,
+        vote_granted: bool,
+        voter_id: usize,
+    ) {
+        if !vote_granted || term != self.cur_term {
+            return;
+        }
+
+        if let Some(ref mut task) = self.request_vote_task {
+            task.granted_by.insert(voter_id);
+            if task.granted_by.len() > self.cluster_size / 2 {
+                // Won the election.
+                self.voted_for = None;
+                self.request_vote_task = None;
+                todo!()
+            }
+        }
     }
 
     /// Analyzes the state of the Raft core and performs a series of actions if necessary.
@@ -248,6 +362,6 @@ impl RaftCore {
     /// Followers and candidates will check if election timeout has occurred.
     /// Candidate will check if it has the votes to become the new leader.
     pub fn run_cycle(&mut self) -> anyhow::Result<()> {
-        Ok(())
+        todo!()
     }
 }

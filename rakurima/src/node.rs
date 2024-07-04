@@ -10,7 +10,7 @@ use crate::broadcast;
 use crate::message::{Body, Payload};
 use crate::raft::RaftCommand;
 use crate::raft::RaftCore;
-use crate::util::get_cur_time_ms;
+use crate::util::{get_cur_time_ms, node_id_to_raft_id};
 use crate::{
     broadcast::BroadcastCore,
     logger::ServerLogger,
@@ -272,9 +272,15 @@ impl Node {
                 term,
                 leader_id,
                 success,
+                last_log_index,
             } => {
-                self.raft_core
-                    .process_append_result(term, leader_id, success);
+                self.raft_core.process_append_result(
+                    term,
+                    leader_id,
+                    success,
+                    node_id_to_raft_id(&msg.src),
+                    last_log_index,
+                );
             }
             RequestVote {
                 term,
@@ -295,8 +301,12 @@ impl Node {
                 leader_id,
                 vote_granted,
             } => {
-                self.raft_core
-                    .process_vote_result(term, leader_id, vote_granted);
+                self.raft_core.process_vote_result(
+                    term,
+                    leader_id,
+                    vote_granted,
+                    node_id_to_raft_id(&msg.src),
+                );
             }
             _ => {
                 // Unexpected types should've never reached here from the input handler.

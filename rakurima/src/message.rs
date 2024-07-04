@@ -88,6 +88,7 @@ pub enum Payload {
         term: usize,
         leader_id: usize,
         success: bool,
+        last_log_index: usize,
     },
     RequestVote {
         term: usize,
