@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     logger::RaftLogger,
-    message::{Message, Payload},
+    message::{Body, Message, Payload},
     util::{get_cur_time_ms, jitter, node_id_to_raft_id, raft_id_to_node_id},
 };
 
@@ -116,8 +116,8 @@ impl RaftCore {
             next_election_time,
             commit_index: 0,
             last_applied: 0,
-            next_indices: Vec::with_capacity(cluster_size),
-            match_indices: Vec::with_capacity(cluster_size),
+            next_indices: vec![1; cluster_size],
+            match_indices: vec![0; cluster_size],
             next_replicate_time: 0,
             pn_counter_value: 0,
         }
@@ -281,13 +281,15 @@ impl RaftCore {
         last_log_index: usize,
         last_log_term: usize,
     ) -> Payload {
-        if term <= self.cur_term {
+        if term < self.cur_term {
             return Payload::RequestVoteResult {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 vote_granted: false,
             };
         }
+
+        self.maybe_convert_to_follower(term, self.cur_leader_id); // Keep leader ID the same during election.
 
         if let Some(voted_for_id) = self.voted_for {
             if voted_for_id == candidate_id {
@@ -307,16 +309,16 @@ impl RaftCore {
             }
         }
 
-        let (my_last_log_index, my_last_log_term) = match self.logs.last() {
-            Some(last_log) => (last_log.index, last_log.term),
-            None => (0, self.cur_term),
-        };
+        let (my_last_log_index, my_last_log_term) = self.get_log_index_and_term(None);
 
         // Check if the candidate's log is up to date.
         if last_log_term > my_last_log_term
             || (last_log_term == my_last_log_term && last_log_index >= my_last_log_index)
         {
             // Grant vote.
+            self.logger.log_debug(&format!(
+                "Granting vote to candidate: {candidate_id} for term: {term}."
+            ));
             self.voted_for.insert(candidate_id);
             Payload::RequestVoteResult {
                 term,
@@ -329,6 +331,20 @@ impl RaftCore {
                 leader_id: self.cur_leader_id,
                 vote_granted: false,
             }
+        }
+    }
+
+    /// Retrieves the index and term of a log entry at a particular index.
+    /// The last log is checked if index is `None`.
+    fn get_log_index_and_term(&self, index: Option<usize>) -> (usize, usize) {
+        let log = match index {
+            Some(i) => self.logs.get(i - 1), // 1-based indexing.
+            None => self.logs.last(),
+        };
+
+        match log {
+            Some(last_log) => (last_log.index, last_log.term),
+            None => (0, self.cur_term),
         }
     }
 
@@ -348,9 +364,15 @@ impl RaftCore {
             task.granted_by.insert(voter_id);
             if task.granted_by.len() > self.cluster_size / 2 {
                 // Won the election.
+                self.logger
+                    .log_debug(&format!("Election won for the term: {term}."));
                 self.voted_for = None;
                 self.request_vote_task = None;
-                todo!()
+                self.role = RaftRole::Leader;
+                self.cur_leader_id = self.raft_id;
+                self.next_replicate_time = get_cur_time_ms(); // Immediately schedule a round of replication to signal election result.
+                self.next_indices = vec![self.logs.len() + 1; self.cluster_size];
+                self.match_indices = vec![0; self.cluster_size];
             }
         }
     }
@@ -360,8 +382,72 @@ impl RaftCore {
     /// Leader will check if it needs to commit any entries which have been replicated in the majority of nodes.
     /// All nodes will apply committed log entries.
     /// Followers and candidates will check if election timeout has occurred.
-    /// Candidate will check if it has the votes to become the new leader.
-    pub fn run_cycle(&mut self) -> anyhow::Result<()> {
+    pub fn run_cycle(&mut self, next_msg_id: usize) -> anyhow::Result<()> {
+        if self.cluster_size <= 1 {
+            // Singleton mode, commit everything.
+            self.commit_index = self.logs.len();
+        } else if matches!(self.role, RaftRole::Leader) {
+            todo!()
+        } else {
+            // Follower or candidate.
+            // Check for election timeout.
+            let cur_time_ms = get_cur_time_ms();
+            if cur_time_ms >= self.next_election_time {
+                // Start a new election.
+                self.next_election_time =
+                    cur_time_ms + jitter(self.config.base_election_timeout_ms) as u128;
+                self.cur_term += 1;
+                // Vote for self.
+                self.voted_for = Some(self.raft_id);
+                let mut granted_by = HashSet::with_capacity(self.cluster_size);
+                granted_by.insert(self.raft_id);
+                self.request_vote_task = Some(RequestVoteTask { granted_by });
+
+                // Send vote requests to all peers in the cluster.
+                let (my_last_log_index, my_last_log_term) = self.get_log_index_and_term(None);
+                let message_body = Body {
+                    msg_id: Some(next_msg_id),
+                    in_reply_to: None,
+                    payload: Payload::RequestVote {
+                        term: self.cur_term,
+                        candidate_id: self.raft_id,
+                        last_log_index: my_last_log_index,
+                        last_log_term: my_last_log_term,
+                    },
+                };
+                for peer_id in 0..self.cluster_size {
+                    if peer_id == self.raft_id {
+                        continue;
+                    }
+                    let peer_id = raft_id_to_node_id(peer_id);
+                    self.out_sender.send(Message {
+                        src: raft_id_to_node_id(self.raft_id),
+                        dst: peer_id,
+                        body: message_body.clone(),
+                    })?;
+                }
+            }
+        }
+
+        // Apply committed log entries.
+        for log_index in (self.last_applied + 1)..(self.commit_index + 1) {
+            self.apply_log(log_index);
+        }
+        self.last_applied = max(self.last_applied, self.commit_index);
+
+        Ok(())
+    }
+
+    /// Applies a log's command to the state.
+    /// Leader will also send an acknowledgment message back to the client.
+    fn apply_log(&mut self, log_index: usize) -> anyhow::Result<()> {
+        self.logger
+            .log_debug(&format!("Applying log entry at index: {log_index}."));
+        let log_to_apply: &RaftLog = self
+            .logs
+            .get(log_index - 1)
+            .expect("Log should exist if committed.");
+
         todo!()
     }
 }

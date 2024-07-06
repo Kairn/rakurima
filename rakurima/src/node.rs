@@ -170,7 +170,8 @@ impl Node {
             }
 
             // Do chores on the Raft node.
-            self.raft_core.run_cycle()?;
+            let next_msg_id = self.vend_msg_id();
+            self.raft_core.run_cycle(next_msg_id)?;
 
             thread::sleep(Duration::from_millis(
                 jitter(self.config.base_pause_time_ms) as u64,
