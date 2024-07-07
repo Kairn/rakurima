@@ -227,7 +227,7 @@ impl Node {
                 }
             }
             Add { delta } => {
-                if self.raft_core.is_leader() {
+                if self.raft_core.get_leader_id() == node_id_to_raft_id(&msg.dst) {
                     self.raft_core.accept_new_log(
                         RaftCommand::UpdateCounter { delta },
                         msg.src,
@@ -246,8 +246,15 @@ impl Node {
                         None,
                     ))?;
                 } else {
-                    // TODO: Return PN counter value.
-                    self.logger.log_debug("Unexpected read at this time.");
+                    // Return PN counter value.
+                    self.out_sender.send(Message::into_response(
+                        msg,
+                        Payload::ReadOk {
+                            messages: None,
+                            value: Some(self.raft_core.get_pn_counter_value()),
+                        },
+                        None,
+                    ))?;
                 }
             }
             // Raft specific internal handling follows.

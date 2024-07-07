@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     logger::RaftLogger,
     message::{Body, Message, Payload},
+    raft::RaftCommand::*,
     util::{get_cur_time_ms, jitter, node_id_to_raft_id, raft_id_to_node_id},
 };
 
@@ -127,20 +128,43 @@ impl RaftCore {
         matches!(self.role, RaftRole::Leader)
     }
 
+    pub fn get_leader_id(&self) -> usize {
+        self.cur_leader_id
+    }
+
     pub fn get_leader_node_id(&self) -> String {
         raft_id_to_node_id(self.cur_leader_id)
+    }
+
+    pub fn get_pn_counter_value(&self) -> i32 {
+        self.pn_counter_value
     }
 
     /// Accepts a client update command as the leader.
     /// Response won't be sent until this log is committed and applied.
     pub fn accept_new_log(&mut self, command: RaftCommand, src: String, msg_id: Option<usize>) {
+        if !matches!(self.role, RaftRole::Leader) {
+            // Cannot accept if no longer the leader (pending election result).
+            // Client will need to retry after election has ended.
+            self.logger
+                .log_debug("Received client update as non-leader, intentionally dropping it.");
+            return;
+        }
+
+        let log_index = self.logs.len() + 1;
         self.logs.push(RaftLog {
             term: self.cur_term,
-            index: self.logs.len() + 1,
+            index: log_index,
             command,
             src,
             msg_id: msg_id.expect("Requests should always have msg_id"),
         });
+
+        // Update match index for self.
+        *self
+            .match_indices
+            .get_mut(self.raft_id)
+            .expect("Match index must exist for self") = log_index;
     }
 
     /// Processes the `AppendEntries` RPC from a claimed leader.
@@ -164,6 +188,8 @@ impl RaftCore {
         }
 
         self.maybe_convert_to_follower(term, leader_id);
+        // Always acknowledge the leader.
+        self.cur_leader_id = leader_id;
 
         // Reset election timeout.
         self.next_election_time =
@@ -338,7 +364,13 @@ impl RaftCore {
     /// The last log is checked if index is `None`.
     fn get_log_index_and_term(&self, index: Option<usize>) -> (usize, usize) {
         let log = match index {
-            Some(i) => self.logs.get(i - 1), // 1-based indexing.
+            Some(i) => {
+                if i == 0 {
+                    None
+                } else {
+                    self.logs.get(i - 1) // 1-based indexing.
+                }
+            }
             None => self.logs.last(),
         };
 
@@ -378,8 +410,8 @@ impl RaftCore {
     }
 
     /// Analyzes the state of the Raft core and performs a series of actions if necessary.
-    /// Leader will check if it needs to send log replication.
     /// Leader will check if it needs to commit any entries which have been replicated in the majority of nodes.
+    /// Leader will check if it needs to send log replication.
     /// All nodes will apply committed log entries.
     /// Followers and candidates will check if election timeout has occurred.
     pub fn run_cycle(&mut self, next_msg_id: usize) -> anyhow::Result<()> {
@@ -387,7 +419,68 @@ impl RaftCore {
             // Singleton mode, commit everything.
             self.commit_index = self.logs.len();
         } else if matches!(self.role, RaftRole::Leader) {
-            todo!()
+            // Check replication status and commit.
+            for pending_log in self.logs[self.commit_index..].iter().rev() {
+                if pending_log.term != self.cur_term {
+                    // Never commit logs from previous terms.
+                    break;
+                }
+                // Count replicas.
+                let mut replica_count: usize = 0;
+                for match_index in &self.match_indices {
+                    if *match_index >= pending_log.index {
+                        replica_count += 1;
+                    }
+                }
+                if replica_count > self.cluster_size / 2 {
+                    // Commit all logs up to this point.
+                    self.commit_index = pending_log.index;
+                    break;
+                }
+            }
+
+            // Replicate logs to other nodes.
+            let cur_time_ms = get_cur_time_ms();
+            if cur_time_ms >= self.next_replicate_time {
+                self.logger.log_debug("Preparing to replicate logs...");
+                self.next_replicate_time =
+                    cur_time_ms + jitter(self.config.base_replicate_interval_ms) as u128;
+                for peer_id in 0..self.cluster_size {
+                    if peer_id == self.raft_id {
+                        continue;
+                    }
+                    let next_index = *self
+                        .next_indices
+                        .get(peer_id)
+                        .expect("Next index should exist for peer");
+                    let (prev_log_index, prev_log_term) =
+                        self.get_log_index_and_term(Some(next_index - 1));
+                    let entries_to_send = if self.logs.len() >= next_index {
+                        Some(Vec::from_iter(self.logs[next_index - 1..].iter().cloned()))
+                    } else {
+                        // Nothing for the peer to catch up, but still send the message as heartbeat.
+                        None
+                    };
+
+                    // Send the `AppendEntries` RPC.
+                    self.out_sender.send(Message {
+                        src: raft_id_to_node_id(self.raft_id),
+                        dst: raft_id_to_node_id(peer_id),
+                        body: Body {
+                            msg_id: Some(next_msg_id),
+                            in_reply_to: None,
+                            payload: Payload::AppendEntries {
+                                term: self.cur_term,
+                                leader_id: self.raft_id,
+                                prev_log_index,
+                                prev_log_term,
+                                entries: entries_to_send,
+                                leader_commit: self.commit_index,
+                            },
+                        },
+                    })?
+                }
+            }
         } else {
             // Follower or candidate.
             // Check for election timeout.
@@ -448,6 +541,26 @@ impl RaftCore {
             .get(log_index - 1)
             .expect("Log should exist if committed.");
 
-        todo!()
+        let response_payload = match log_to_apply.command {
+            UpdateCounter { delta } => {
+                self.pn_counter_value += delta;
+                Payload::AddOk {}
+            }
+        };
+
+        // Send response back to client acknowledging the update.
+        if matches!(self.role, RaftRole::Leader) {
+            self.out_sender.send(Message {
+                src: raft_id_to_node_id(self.raft_id),
+                dst: log_to_apply.src.clone(),
+                body: Body {
+                    msg_id: None,
+                    in_reply_to: Some(log_to_apply.msg_id),
+                    payload: response_payload,
+                },
+            })?;
+        }
+
+        Ok(())
     }
 }
