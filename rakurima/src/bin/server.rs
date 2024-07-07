@@ -19,8 +19,8 @@ use util::get_numeric_environment_variable;
 
 const DEF_BASE_PAUSE_TIME_MS: usize = 10;
 const DEF_BASE_BROADCAST_RETRY_MS: usize = 200;
-const DEF_BASE_ELECTION_TIMEOUT_MS: usize = 3000;
-const DEF_BASE_REPLICATE_INTERVAL_MS: usize = 200;
+const DEF_BASE_ELECTION_TIMEOUT_MS: usize = 2500;
+const DEF_BASE_REPLICATE_INTERVAL_MS: usize = 150;
 
 fn main() -> anyhow::Result<()> {
     let logger: &'static ServerLogger = Box::leak(Box::new(ServerLogger {}));

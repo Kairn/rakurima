@@ -27,8 +27,8 @@ Server logs (printed to stderr) can be found under `./store/latest/node-logs`.
 The following environment variables can be supplied to the test program.
 * `BASE_PAUSE_TIME_MS` - The (base) sleep time of the Rakurima worker thread in milliseconds, default to 10.
 * `BASE_BROADCAST_RETRY_MS` - The (base) timeout in milliseconds before a broadcast is retried, default to 200.
-* `BASE_ELECTION_TIMEOUT_MS` - The (base) timeout in milliseconds before a raft node holds a new election without receiving replication call, default to 3000.
-* `BASE_REPLICATE_INTERVAL_MS` - The (base) time in milliseconds between replication RPCs for leader, default to 200.
+* `BASE_ELECTION_TIMEOUT_MS` - The (base) timeout in milliseconds before a raft node holds a new election without receiving replication call, default to 2500.
+* `BASE_REPLICATE_INTERVAL_MS` - The (base) time in milliseconds between replication RPCs for leader, default to 150.
 
 The following workloads are supported.
 
@@ -45,6 +45,16 @@ The following workloads are supported.
 ### Broadcast (complex)
 ```
 ./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 25 --time-limit 30 --rate 100 --latency 100 --nemesis partition
+```
+
+### PN counter (simple)
+```
+./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
+```
+
+### PN counter (complex)
+```
+./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 5 --rate 100 --time-limit 60 --latency 75 --nemesis partition
 ```
 
 ## Design
