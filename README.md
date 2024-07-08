@@ -1,6 +1,6 @@
 # Rakurima
 
-This is a Rust based implementation of distributed system challenges conducted using the [Maelstrom](https://github.com/jepsen-io/maelstrom/tree/main) workbench.
+This is a Rust based implementation of solving distributed system challenges conducted using the [Maelstrom](https://github.com/jepsen-io/maelstrom/tree/main) workbench.
 
 ## Setup
 * Make sure to have [JDK 11+](https://docs.aws.amazon.com/corretto/latest/corretto-17-ug/downloads-list.html) on the system, runtime for Clojure (language for Maelstrom).
@@ -30,7 +30,7 @@ The following environment variables can be supplied to the test program.
 * `BASE_ELECTION_TIMEOUT_MS` - The (base) timeout in milliseconds before a raft node holds a new election without receiving replication call, default to 2500.
 * `BASE_REPLICATE_INTERVAL_MS` - The (base) time in milliseconds between replication RPCs for leader, default to 150.
 
-The following workloads are supported.
+The following workloads are currently supported. (More in progress)
 
 ### Echo
 ```
@@ -47,12 +47,12 @@ The following workloads are supported.
 ./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 25 --time-limit 30 --rate 100 --latency 100 --nemesis partition
 ```
 
-### PN counter (simple)
+### PN Counter (simple)
 ```
 ./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
 ```
 
-### PN counter (complex)
+### PN Counter (complex)
 ```
 ./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 5 --rate 100 --time-limit 60 --latency 75 --nemesis partition
 ```
@@ -60,7 +60,7 @@ The following workloads are supported.
 ## Design
 Rakurima is designed to be an all-encompassing and non-blocking server that handles Maelstrom workloads with partition tolerance.
 * **All-encompassing** - There is only a single server binary that contains logic to process different types of requests, even concurrently without being incorrect.
-* **Non-blocking** - A pending request will not block the serving of other requests. For example, while the server is waiting for the replication of an update request, it can still respond to new echo requests with minimal delay.
+* **Non-blocking** - A "slow" request will not block the servicing of other requests. For example, while the server is waiting for the replication of an update request, it can still respond to new echo requests with minimal delay.
 * **Partition tolerance** - It adopts a simplified version of the [Raft](https://raft.github.io/raft.pdf) consensus algorithm for distributed log replication to ensure that the system can function correctly as long as a majority of nodes are up and can communicate with each other.
 
 More detailed design specifications can be found in the [doc](https://github.com/Kairn/rakurima/tree/master/doc) subdirectory.
