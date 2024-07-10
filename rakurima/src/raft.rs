@@ -100,7 +100,7 @@ impl RaftCore {
             RaftRole::Follower
         };
         let next_election_time =
-            get_cur_time_ms() + jitter(config.base_election_timeout_ms) as u128;
+            get_cur_time_ms() + jitter(config.base_election_timeout_ms, Some(2)) as u128;
 
         Self {
             raft_id: node_id_to_raft_id(node_id),
@@ -142,13 +142,19 @@ impl RaftCore {
 
     /// Accepts a client update command as the leader.
     /// Response won't be sent until this log is committed and applied.
-    pub fn accept_new_log(&mut self, command: RaftCommand, src: String, msg_id: Option<usize>) {
+    /// Returns whether the log has been accepted.
+    pub fn accept_new_log(
+        &mut self,
+        command: RaftCommand,
+        src: String,
+        msg_id: Option<usize>,
+    ) -> bool {
         if !matches!(self.role, RaftRole::Leader) {
             // Cannot accept if no longer the leader (pending election result).
             // Client will need to retry after election has ended.
             self.logger
-                .log_debug("Received client update as non-leader, intentionally dropping it.");
-            return;
+                .log_debug("Received client update as non-leader, unable to service request.");
+            return false;
         }
 
         let log_index = self.logs.len() + 1;
@@ -168,6 +174,8 @@ impl RaftCore {
 
         // Immediately schedule a replication to catch nodes up.
         self.next_replicate_time = get_cur_time_ms();
+
+        true
     }
 
     /// Processes the `AppendEntries` RPC from a claimed leader.
@@ -186,7 +194,7 @@ impl RaftCore {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 success: false,
-                last_log_index: 0, // Irrelevant if not success.
+                last_log_index: 0, // Should be ignored in this case.
             };
         }
 
@@ -194,9 +202,7 @@ impl RaftCore {
         // Always acknowledge the leader.
         self.cur_leader_id = leader_id;
 
-        // Reset election timeout.
-        self.next_election_time =
-            get_cur_time_ms() + jitter(self.config.base_election_timeout_ms) as u128;
+        self.reset_election_timeout();
 
         if self.log_matches(prev_log_index, prev_log_term) {
             if let Some(ref mut entries) = entries {
@@ -213,25 +219,28 @@ impl RaftCore {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 success: true,
-                last_log_index: if let Some(last_log) = self.logs.last() {
-                    last_log.index
-                } else {
-                    0
-                },
+                last_log_index: self.logs.last().map_or(0, |last_log| last_log.index),
             }
         } else {
             self.logger.log_debug(&format!("Replication validation failed at previous index: {prev_log_index} and previous log term: {prev_log_term}."));
 
             // Delete invalid entries at and after the previous index.
+            // `prev_log_index` is guaranteed to be positive if didn't match.
             self.logs.truncate(max(prev_log_index - 1, 0));
 
             Payload::AppendEntriesResult {
                 term: self.cur_term,
                 leader_id: self.cur_leader_id,
                 success: false,
-                last_log_index: 0,
+                last_log_index: self.logs.last().map_or(0, |last_log| last_log.index),
             }
         }
+    }
+
+    /// Resets the election timeout.
+    fn reset_election_timeout(&mut self) {
+        self.next_election_time =
+            get_cur_time_ms() + jitter(self.config.base_election_timeout_ms, Some(2)) as u128;
     }
 
     /// Checks and converts the current node into a follower if the current term is less than received.
@@ -249,8 +258,7 @@ impl RaftCore {
             self.cur_leader_id = leader_id;
             self.voted_for = None;
             self.request_vote_task = None;
-            self.next_election_time =
-                get_cur_time_ms() + jitter(self.config.base_election_timeout_ms) as u128;
+            self.reset_election_timeout();
             return true;
         }
         false
@@ -291,12 +299,18 @@ impl RaftCore {
                     .get_mut(follower_id)
                     .expect("Follower ID should always exist") = last_log_index;
             } else {
-                // Decrement the follower's next index to retry later.
-                // Index is guaranteed to be greater or equal to 0 at any point.
-                self.next_indices
+                // Decrease the next index for this follower based on its last index.
+                let follower_next_index = self
+                    .next_indices
                     .get_mut(follower_id)
-                    .expect("Follower ID should always exist")
-                    .saturating_sub(1);
+                    .expect("Follower ID should always exist");
+                if last_log_index < *follower_next_index {
+                    *follower_next_index = last_log_index;
+                } else {
+                    follower_next_index.saturating_sub(1); // At least decrement 1.
+                }
+                // Next index cannot be less than 1.
+                *follower_next_index = max(*follower_next_index, 1);
             }
         }
         // Do nothing if no longer the leader.
@@ -452,7 +466,7 @@ impl RaftCore {
                 self.logger
                     .log_debug(&format!("Current next indices: {:?}.", self.next_indices));
                 self.next_replicate_time =
-                    cur_time_ms + jitter(self.config.base_replicate_interval_ms) as u128;
+                    cur_time_ms + self.config.base_replicate_interval_ms as u128;
                 for peer_id in 0..self.cluster_size {
                     if peer_id == self.raft_id {
                         continue;
@@ -500,8 +514,7 @@ impl RaftCore {
                     "Election timeout! Starting a new election for term {}.",
                     self.cur_term
                 ));
-                self.next_election_time =
-                    cur_time_ms + jitter(self.config.base_election_timeout_ms) as u128;
+                self.reset_election_timeout();
                 // Vote for self.
                 self.voted_for = Some(self.raft_id);
                 let mut granted_by = HashSet::with_capacity(self.cluster_size);

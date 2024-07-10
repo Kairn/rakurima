@@ -1,4 +1,5 @@
 use std::{
+    cmp::max,
     env,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -32,12 +33,13 @@ pub fn get_numeric_environment_variable(
     }
 }
 
-/// Applies a random (between 0 and 10) fraction (1/10) of the base value on top of the base value.
+/// Applies a random (between 0 and 10) fraction (1/10) of the (base value * magnitude) on top of the base value.
 /// The final value will be between the base value and 2 times the base value (both inclusive).
 /// Used to randomize sleep/pause/retry timeouts.
-pub fn jitter(base: usize) -> usize {
+pub fn jitter(base: usize, magnitude: Option<usize>) -> usize {
+    let magnitude = max(magnitude.unwrap_or(1), 1);
     let fraction = rand::random::<usize>() % 11;
-    base + base * fraction / 10
+    base + base * magnitude * fraction / 10
 }
 
 /// Returns the current system time in milliseconds.

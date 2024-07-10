@@ -156,7 +156,7 @@ impl Node {
                 for task in broadcast_core.tasks() {
                     if let Some(broadcast_messages) = task.generate_retry_messages(
                         &self.node_id,
-                        jitter(self.config.base_broadcast_retry_ms),
+                        jitter(self.config.base_broadcast_retry_ms, None),
                     ) {
                         let value = task.get_content();
                         self.logger.log_debug(&format!(
@@ -174,7 +174,7 @@ impl Node {
             self.raft_core.run_cycle(next_msg_id)?;
 
             thread::sleep(Duration::from_millis(
-                jitter(self.config.base_pause_time_ms) as u64,
+                jitter(self.config.base_pause_time_ms, None) as u64,
             ));
         }
 
@@ -228,11 +228,20 @@ impl Node {
             }
             Add { delta } => {
                 if self.raft_core.get_leader_id() == node_id_to_raft_id(&msg.dst) {
-                    self.raft_core.accept_new_log(
+                    if !self.raft_core.accept_new_log(
                         RaftCommand::UpdateCounter { delta },
-                        msg.src,
+                        msg.src.clone(),
                         msg.body.msg_id,
-                    );
+                    ) {
+                        let error_payload = Payload::Error {
+                            code: 11, // `temporarily-unavailable` in Maelstrom.
+                            text:
+                                "No leader available to serve at the moment due to pending election"
+                                    .to_string(),
+                        };
+                        self.out_sender
+                            .send(Message::into_response(msg, error_payload, None))?;
+                    }
                 } else {
                     self.forward_to_leader(msg)?;
                 }

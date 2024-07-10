@@ -88,7 +88,7 @@ pub enum Payload {
         term: usize,
         leader_id: usize,
         success: bool,
-        last_log_index: usize,
+        last_log_index: usize, // Inform the leader about the replication progress.
     },
     RequestVote {
         term: usize,
