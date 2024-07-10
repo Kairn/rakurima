@@ -54,7 +54,7 @@ The following workloads are currently supported. (More in progress)
 
 ### PN Counter (complex)
 ```
-./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 5 --rate 100 --time-limit 60 --latency 75 --nemesis partition
+./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 7 --rate 100 --time-limit 60 --latency 75 --nemesis partition
 ```
 
 ## Design

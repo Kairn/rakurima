@@ -366,6 +366,8 @@ impl RaftCore {
                 "Granting vote to candidate: {candidate_id} for term: {term}."
             ));
             self.voted_for.insert(candidate_id);
+            // Reset election timeout to give chance for the current election to finish.
+            self.reset_election_timeout();
             Payload::RequestVoteResult {
                 term,
                 leader_id: self.cur_leader_id,
