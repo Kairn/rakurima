@@ -28,7 +28,7 @@ The following environment variables can be supplied to the test program.
 * `BASE_PAUSE_TIME_MS` - The (base) sleep time of the Rakurima worker thread in milliseconds, default to 10.
 * `BASE_BROADCAST_RETRY_MS` - The (base) timeout in milliseconds before a broadcast is retried, default to 200.
 * `BASE_ELECTION_TIMEOUT_MS` - The (base) timeout in milliseconds before a raft node holds a new election without receiving replication call, default to 3000.
-* `BASE_REPLICATE_INTERVAL_MS` - The (base) time in milliseconds between replication RPCs for leader, default to 150. No jitter is applied by currently.
+* `BASE_REPLICATE_INTERVAL_MS` - The time in milliseconds between replication RPCs for leader, default to 150. No jitter is applied currently.
 
 The following workloads are currently supported. (More in progress)
 
@@ -61,7 +61,7 @@ The following workloads are currently supported. (More in progress)
 Rakurima is designed to be an all-encompassing and non-blocking server that handles Maelstrom workloads with partition tolerance.
 * **All-encompassing** - There is only a single server binary that contains logic to process different types of requests, even concurrently without being incorrect.
 * **Non-blocking** - A "slow" request will not block the servicing of other requests. For example, while the server is waiting for the replication of an update request, it can still respond to new echo requests with minimal delay.
-* **Partition tolerance** - It adopts a simplified version of the [Raft](https://raft.github.io/raft.pdf) consensus algorithm for distributed log replication to ensure that the system can function correctly as long as a majority of nodes are up and can communicate with each other.
+* **Partition tolerance** - It implements an adapted version of the [Raft](https://raft.github.io/raft.pdf) consensus algorithm for distributed log replication to ensure that the system can function correctly as long as a majority of nodes are up and can communicate with each other.
 
 More detailed design specifications can be found in the [doc](https://github.com/Kairn/rakurima/tree/master/doc) subdirectory.
 
