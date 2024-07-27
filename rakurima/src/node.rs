@@ -182,8 +182,8 @@ impl Node {
     }
 
     /// Helper function to process the message.
-    fn process_message(&mut self, mut msg: Message) -> anyhow::Result<()> {
-        match msg.body.payload {
+    fn process_message(&mut self, mut o_msg: Message) -> anyhow::Result<()> {
+        match o_msg.body.payload {
             Topology { ref mut topology } => {
                 let neighbors = topology
                     .remove(&self.node_id)
@@ -197,27 +197,27 @@ impl Node {
 
                 // Send out the ack message on Topology.
                 self.out_sender
-                    .send(Message::into_response(msg, TopologyOk {}, None))?;
+                    .send(Message::into_response(o_msg, TopologyOk {}, None))?;
             }
             Broadcast { message } => {
                 let next_msg_id = self.vend_msg_id();
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
-                    broadcast_core.store_message(message, next_msg_id, &msg.src);
+                    broadcast_core.store_message(message, next_msg_id, &o_msg.src);
 
                     // Send out the ack message on Broadcast.
                     self.out_sender
-                        .send(Message::into_response(msg, BroadcastOk {}, None))?;
+                        .send(Message::into_response(o_msg, BroadcastOk {}, None))?;
                 } else {
                     bail!("Got broadcast without initialization");
                 }
             }
             BroadcastOk {} => {
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
-                    let msg_id = msg
+                    let msg_id = o_msg
                         .body
                         .in_reply_to
                         .expect("in_reply_to should be present on broadcast_ok");
-                    let recipient = &msg.src;
+                    let recipient = &o_msg.src;
                     self.logger.log_debug(&format!(
                         "Received broadcast_ok from {recipient} for msg_id: {msg_id}."
                     ));
@@ -227,37 +227,20 @@ impl Node {
                 }
             }
             Add { delta } => {
-                if self.raft_core.get_leader_id() == node_id_to_raft_id(&msg.dst) {
-                    if !self.raft_core.accept_new_log(
-                        RaftCommand::UpdateCounter { delta },
-                        msg.src.clone(),
-                        msg.body.msg_id,
-                    ) {
-                        let error_payload = Payload::Error {
-                            code: 11, // `temporarily-unavailable` in Maelstrom.
-                            text:
-                                "No leader available to serve at the moment due to pending election"
-                                    .to_string(),
-                        };
-                        self.out_sender
-                            .send(Message::into_response(msg, error_payload, None))?;
-                    }
-                } else {
-                    self.forward_to_leader(msg)?;
-                }
+                self.handle_raft_command(RaftCommand::UpdateCounter { delta }, o_msg)?
             }
             Read {} => {
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
                     // Return broadcast messages.
                     self.out_sender.send(Message::into_response(
-                        msg,
+                        o_msg,
                         broadcast_core.generate_read_payload(),
                         None,
                     ))?;
                 } else {
                     // Return PN counter value.
                     self.out_sender.send(Message::into_response(
-                        msg,
+                        o_msg,
                         Payload::ReadOk {
                             messages: None,
                             value: Some(self.raft_core.get_pn_counter_value()),
@@ -265,6 +248,37 @@ impl Node {
                         None,
                     ))?;
                 }
+            }
+            Send { ref key, msg } => self.handle_raft_command(
+                RaftCommand::AppendKafkaRecord {
+                    key: key.clone(),
+                    msg,
+                },
+                o_msg,
+            )?,
+            Poll { ref offsets } => {
+                let msgs = self.raft_core.get_kafka_records(offsets);
+                self.out_sender.send(Message::into_response(
+                    o_msg,
+                    Payload::PollOk { msgs },
+                    None,
+                ))?;
+            }
+            CommitOffsets { ref offsets } => {
+                self.handle_raft_command(
+                    RaftCommand::CommitOffsets {
+                        offsets: offsets.clone(),
+                    },
+                    o_msg,
+                )?;
+            }
+            ListCommittedOffsets { ref keys } => {
+                let offsets = self.raft_core.get_committed_offsets(keys);
+                self.out_sender.send(Message::into_response(
+                    o_msg,
+                    Payload::ListCommittedOffsetsOk { offsets },
+                    None,
+                ))?;
             }
             // Raft specific internal handling follows.
             AppendEntries {
@@ -283,7 +297,7 @@ impl Node {
                     entries,
                     leader_commit,
                 );
-                self.reply_to_raft_node(result, msg.dst, msg.src)?
+                self.reply_to_raft_node(result, o_msg.dst, o_msg.src)?
             }
             AppendEntriesResult {
                 term,
@@ -295,7 +309,7 @@ impl Node {
                     term,
                     leader_id,
                     success,
-                    node_id_to_raft_id(&msg.src),
+                    node_id_to_raft_id(&o_msg.src),
                     last_log_index,
                 );
             }
@@ -311,7 +325,7 @@ impl Node {
                     last_log_index,
                     last_log_term,
                 );
-                self.reply_to_raft_node(result, msg.dst, msg.src)?
+                self.reply_to_raft_node(result, o_msg.dst, o_msg.src)?
             }
             RequestVoteResult {
                 term,
@@ -322,12 +336,12 @@ impl Node {
                     term,
                     leader_id,
                     vote_granted,
-                    node_id_to_raft_id(&msg.src),
+                    node_id_to_raft_id(&o_msg.src),
                 );
             }
             _ => {
                 // Unexpected types should've never reached here from the input handler.
-                self.logger.log_debug(&format!("Server node encountered unexpected message passed from input handler: {msg:?}. Ignored."));
+                self.logger.log_debug(&format!("Server node encountered unexpected message passed from input handler: {o_msg:?}. Ignored."));
             }
         }
 
@@ -370,6 +384,31 @@ impl Node {
                 payload,
             },
         })?;
+
+        Ok(())
+    }
+
+    /// Handles a potential client request that needs to be replicated via the Raft state machine.
+    /// Leader will consume the supplied command, whereas non-leader will forward the message.
+    /// During election, the current "incumbent" (no longer the official leader) will response with temporarily-available.
+    fn handle_raft_command(&mut self, command: RaftCommand, msg: Message) -> anyhow::Result<()> {
+        if self.raft_core.get_leader_id() == node_id_to_raft_id(&msg.dst) {
+            if !self
+                .raft_core
+                .accept_new_log(command, msg.src.clone(), msg.body.msg_id)
+            {
+                let error_payload = Payload::Error {
+                    code: 11, // `temporarily-unavailable` in Maelstrom.
+                    text: "No leader available to serve at the moment due to pending election"
+                        .to_string(),
+                };
+                self.out_sender
+                    .send(Message::into_response(msg, error_payload, None))?;
+            }
+        } else {
+            self.forward_to_leader(msg)?;
+        }
+
         Ok(())
     }
 }

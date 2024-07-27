@@ -65,7 +65,15 @@ impl InputHandler {
                 self.out_sender
                     .send(Message::into_response(message, EchoOk { echo }, None))?
             }
-            Topology { .. } | Broadcast { .. } | BroadcastOk {} | Read {} | Add { .. } => {
+            Topology { .. }
+            | Broadcast { .. }
+            | BroadcastOk {}
+            | Read {}
+            | Add { .. }
+            | Send { .. }
+            | Poll { .. }
+            | CommitOffsets { .. }
+            | ListCommittedOffsets { .. } => {
                 // Maelstrom client/server messages.
                 // Send these messages over to the server for further processing.
                 self.in_sender.send(message)?;

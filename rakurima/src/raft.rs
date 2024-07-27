@@ -1,4 +1,8 @@
-use std::{cmp::max, collections::HashSet, sync::mpsc::Sender};
+use std::{
+    cmp::max,
+    collections::{HashMap, HashSet},
+    sync::mpsc::Sender,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +15,8 @@ use crate::{
 
 // Node `n0` will be the default leader on startup without an explicit election.
 const DEF_LEADER_ID: &str = "n0";
+// The number of Kafka records to return pass the given offset.
+const DEF_KAFKA_SIZE: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct RequestVoteTask {
@@ -44,6 +50,8 @@ pub enum RaftRole {
 #[serde(rename_all = "snake_case")]
 pub enum RaftCommand {
     UpdateCounter { delta: i32 },
+    AppendKafkaRecord { key: String, msg: i32 },
+    CommitOffsets { offsets: HashMap<String, usize> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +93,8 @@ pub struct RaftCore {
 
     // Data that logs are applied to.
     pn_counter_value: i32,
+    kafka_stream: HashMap<String, Vec<i32>>,
+    committed_offsets: HashMap<String, usize>,
 }
 
 impl RaftCore {
@@ -121,6 +131,8 @@ impl RaftCore {
             match_indices: vec![0; cluster_size],
             next_replicate_time: 0,
             pn_counter_value: 0,
+            kafka_stream: HashMap::new(),
+            committed_offsets: HashMap::new(),
         }
     }
 
@@ -138,6 +150,52 @@ impl RaftCore {
 
     pub fn get_pn_counter_value(&self) -> i32 {
         self.pn_counter_value
+    }
+
+    /// Retrieves a number of Kafka records pass the given offsets.
+    /// Returns a new HashMap with the data.
+    pub fn get_kafka_records(
+        &self,
+        offsets: &HashMap<String, usize>,
+    ) -> HashMap<String, Vec<(usize, i32)>> {
+        offsets
+            .iter()
+            .filter_map(|(key, offset)| self.build_records_for_offset(key, *offset))
+            .collect()
+    }
+
+    fn build_records_for_offset(
+        &self,
+        key: &str,
+        offset: usize,
+    ) -> Option<(String, Vec<(usize, i32)>)> {
+        self.kafka_stream.get(key).map(|records| {
+            if records.len() <= offset {
+                // No records beyond the offset.
+                (key.to_string(), Vec::new())
+            } else {
+                (
+                    key.to_string(),
+                    records[offset..]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, val)| (offset + i, *val))
+                        .take(DEF_KAFKA_SIZE)
+                        .collect(),
+                )
+            }
+        })
+    }
+
+    /// Returns the committed offsets for the given keys in a new HashMap.
+    pub fn get_committed_offsets(&self, keys: &[String]) -> HashMap<String, usize> {
+        keys.iter()
+            .filter_map(|key| {
+                self.committed_offsets
+                    .get(key)
+                    .map(|offset| (key.clone(), *offset))
+            })
+            .collect()
     }
 
     /// Accepts a client update command as the leader.
@@ -568,10 +626,29 @@ impl RaftCore {
             .get(log_index - 1)
             .expect("Log should exist if committed.");
 
-        let response_payload = match log_to_apply.command {
+        let response_payload = match &log_to_apply.command {
             UpdateCounter { delta } => {
                 self.pn_counter_value += delta;
                 Payload::AddOk {}
+            }
+            AppendKafkaRecord { key, msg } => {
+                let cur_records = self
+                    .kafka_stream
+                    .entry(key.to_string())
+                    .and_modify(|records| records.push(*msg))
+                    .or_insert(vec![*msg]);
+                Payload::SendOk {
+                    offset: cur_records.len().saturating_sub(1), // Offset should be the `len` before the insert.
+                }
+            }
+            CommitOffsets { offsets } => {
+                offsets.iter().for_each(|(key, offset)| {
+                    self.committed_offsets
+                        .entry(key.to_string())
+                        .and_modify(|v| *v = max(*v, *offset))
+                        .or_insert(*offset);
+                });
+                Payload::CommitOffsetsOk {}
             }
         };
 

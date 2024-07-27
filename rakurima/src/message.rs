@@ -75,6 +75,29 @@ pub enum Payload {
         delta: i32,
     },
     AddOk {},
+    Send {
+        key: String,
+        msg: i32,
+    },
+    SendOk {
+        offset: usize,
+    },
+    Poll {
+        offsets: HashMap<String, usize>,
+    },
+    PollOk {
+        msgs: HashMap<String, Vec<(usize, i32)>>,
+    },
+    CommitOffsets {
+        offsets: HashMap<String, usize>,
+    },
+    CommitOffsetsOk {},
+    ListCommittedOffsets {
+        keys: Vec<String>,
+    },
+    ListCommittedOffsetsOk {
+        offsets: HashMap<String, usize>,
+    },
     // Raft specific messages follows.
     AppendEntries {
         term: usize,
