@@ -164,6 +164,9 @@ impl RaftCore {
             .collect()
     }
 
+    /// Enumerates and collects up to `DEF_KAFKA_SIZE` records in the Kafka stream for a given key pass the given offset.
+    /// `None` is returned if the key doesn't exist.
+    /// Empty Vec is returned if the key exists but no records are found pass the offset.
     fn build_records_for_offset(
         &self,
         key: &str,
@@ -171,7 +174,7 @@ impl RaftCore {
     ) -> Option<(String, Vec<(usize, i32)>)> {
         self.kafka_stream.get(key).map(|records| {
             if records.len() <= offset {
-                // No records beyond the offset.
+                // No records pass the offset.
                 (key.to_string(), Vec::new())
             } else {
                 (
@@ -196,6 +199,15 @@ impl RaftCore {
                     .map(|offset| (key.clone(), *offset))
             })
             .collect()
+    }
+
+    /// Emits to log the internal state of the core for debugging purposes.
+    pub fn dump_internal_state(&self) {
+        self.logger.log_debug("Dumping internal states...");
+        self.logger
+            .log_debug(&format!("PN counter value: {}.", self.pn_counter_value));
+        self.logger
+            .log_debug(&format!("Kafka stream: {:?}.", self.kafka_stream));
     }
 
     /// Accepts a client update command as the leader.

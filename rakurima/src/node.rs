@@ -117,14 +117,19 @@ impl Node {
     /// Starts the server's routine.
     pub fn orchestrate(&mut self) -> anyhow::Result<()> {
         let node_id = self.node_id.clone();
-        let mut next_debug_log_time = get_cur_time_ms();
+        let mut next_health_log_time = get_cur_time_ms();
+        let mut next_dump_log_time = get_cur_time_ms();
 
         loop {
-            if get_cur_time_ms() >= next_debug_log_time {
-                // Intent to emit a debug log every 3 seconds to indicate the server is still responsive.
+            if get_cur_time_ms() >= next_health_log_time {
+                // Intent to emit a health log every 3 seconds to indicate the server is still responsive.
                 self.logger
                     .log_debug(&format!("Server node: {node_id} is still operational."));
-                next_debug_log_time += 3000;
+                next_health_log_time += 3000;
+            }
+            if get_cur_time_ms() >= next_dump_log_time {
+                self.raft_core.dump_internal_state();
+                next_dump_log_time += 6000;
             }
 
             // Process all pending messages currently available.

@@ -33,13 +33,12 @@ pub fn get_numeric_environment_variable(
     }
 }
 
-/// Applies a random (between 0 and 10) fraction (1/10) of the (base value * magnitude) on top of the base value.
-/// The final value will be between the base value and 2 times the base value (both inclusive).
+/// Applies a random fraction of the (base value * magnitude) on top of the base value.
 /// Used to randomize sleep/pause/retry timeouts.
 pub fn jitter(base: usize, magnitude: Option<usize>) -> usize {
-    let magnitude = max(magnitude.unwrap_or(1), 1);
-    let fraction = rand::random::<usize>() % 11;
-    base + base * magnitude * fraction / 10
+    let rand_max = max(magnitude.unwrap_or(1), 1) * base + 1;
+    let fraction = rand::random::<usize>() % rand_max;
+    base + fraction
 }
 
 /// Returns the current system time in milliseconds.

@@ -57,6 +57,12 @@ The following workloads are currently supported. (More in progress)
 ./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 7 --rate 100 --time-limit 60 --latency 75 --nemesis partition
 ```
 
+### Kafka
+```
+./maelstrom/maelstrom test -w kafka --bin ./rakurima/target/debug/server --node-count 7 --concurrency 2n --time-limit 90 --rate 500 --latency 50 --nemesis partition
+```
+**Note:** Currently Maelstrom frequently produces internal exceptions during validation analysis at the end, which seems to be unrelated to the implementation code, though no anomalies are detected. Removing the `--nemesis partition` will produce stable results.
+
 ## Design
 Rakurima is designed to be an all-encompassing and non-blocking server that handles Maelstrom workloads with partition tolerance.
 * **All-encompassing** - There is only a single server binary that contains logic to process different types of requests, even concurrently without being incorrect.
