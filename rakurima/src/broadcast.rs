@@ -44,16 +44,16 @@ impl BroadcastTask {
             Some(
                 self.recipients
                     .iter()
-                    .map(|dst| Message {
-                        src: node_id.to_string(),
-                        dst: dst.clone(),
-                        body: Body {
-                            msg_id: Some(self.msg_id),
-                            in_reply_to: None,
-                            payload: Broadcast {
+                    .map(|dst| {
+                        Message::new(
+                            node_id.to_string(),
+                            dst.clone(),
+                            Some(self.msg_id),
+                            None,
+                            Broadcast {
                                 message: self.content,
                             },
-                        },
+                        )
                     })
                     .collect(),
             )

@@ -73,7 +73,8 @@ impl InputHandler {
             | Send { .. }
             | Poll { .. }
             | CommitOffsets { .. }
-            | ListCommittedOffsets { .. } => {
+            | ListCommittedOffsets { .. }
+            | Txn { .. } => {
                 // Maelstrom client/server messages.
                 // Send these messages over to the server for further processing.
                 self.in_sender.send(message)?;

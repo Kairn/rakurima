@@ -13,6 +13,24 @@ pub struct Message {
 }
 
 impl Message {
+    pub fn new(
+        src: String,
+        dst: String,
+        msg_id: Option<usize>,
+        in_reply_to: Option<usize>,
+        payload: Payload,
+    ) -> Self {
+        Self {
+            src,
+            dst,
+            body: Body {
+                msg_id,
+                in_reply_to,
+                payload,
+            },
+        }
+    }
+
     /// Based on the incoming message, craft a response with the appropriate meta information.
     pub fn into_response(message: Self, payload: Payload, msg_id: Option<usize>) -> Self {
         Self {
@@ -97,6 +115,12 @@ pub enum Payload {
     },
     ListCommittedOffsetsOk {
         offsets: HashMap<String, usize>,
+    },
+    Txn {
+        txn: Vec<(String, i32, Option<i32>)>,
+    },
+    TxnOk {
+        txn: Vec<(String, i32, Option<i32>)>,
     },
     // Raft specific messages follows.
     AppendEntries {

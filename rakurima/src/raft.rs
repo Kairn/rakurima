@@ -49,9 +49,19 @@ pub enum RaftRole {
 #[serde(tag = "cmd_type")]
 #[serde(rename_all = "snake_case")]
 pub enum RaftCommand {
-    UpdateCounter { delta: i32 },
-    AppendKafkaRecord { key: String, msg: i32 },
-    CommitOffsets { offsets: HashMap<String, usize> },
+    UpdateCounter {
+        delta: i32,
+    },
+    AppendKafkaRecord {
+        key: String,
+        msg: i32,
+    },
+    CommitOffsets {
+        offsets: HashMap<String, usize>,
+    },
+    Txn {
+        txn: Vec<(String, i32, Option<i32>)>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +105,7 @@ pub struct RaftCore {
     pn_counter_value: i32,
     kafka_stream: HashMap<String, Vec<i32>>,
     committed_offsets: HashMap<String, usize>,
+    kv_store: HashMap<i32, i32>,
 }
 
 impl RaftCore {
@@ -133,6 +144,7 @@ impl RaftCore {
             pn_counter_value: 0,
             kafka_stream: HashMap::new(),
             committed_offsets: HashMap::new(),
+            kv_store: HashMap::new(),
         }
     }
 
@@ -557,22 +569,20 @@ impl RaftCore {
                     };
 
                     // Send the `AppendEntries` RPC.
-                    self.out_sender.send(Message {
-                        src: raft_id_to_node_id(self.raft_id),
-                        dst: raft_id_to_node_id(peer_id),
-                        body: Body {
-                            msg_id: Some(next_msg_id),
-                            in_reply_to: None,
-                            payload: Payload::AppendEntries {
-                                term: self.cur_term,
-                                leader_id: self.raft_id,
-                                prev_log_index,
-                                prev_log_term,
-                                entries: entries_to_send,
-                                leader_commit: self.commit_index,
-                            },
+                    self.out_sender.send(Message::new(
+                        raft_id_to_node_id(self.raft_id),
+                        raft_id_to_node_id(peer_id),
+                        Some(next_msg_id),
+                        None,
+                        Payload::AppendEntries {
+                            term: self.cur_term,
+                            leader_id: self.raft_id,
+                            prev_log_index,
+                            prev_log_term,
+                            entries: entries_to_send,
+                            leader_commit: self.commit_index,
                         },
-                    })?
+                    ))?
                 }
             }
         } else {
@@ -662,19 +672,35 @@ impl RaftCore {
                 });
                 Payload::CommitOffsetsOk {}
             }
+            Txn { txn } => {
+                let txn_data = txn
+                    .iter()
+                    .map(|(op, k, v)| {
+                        // Operation is either "r" or "w".
+                        if op == "r" {
+                            (op.to_string(), *k, self.kv_store.get(k).copied())
+                        } else {
+                            self.kv_store.insert(
+                                *k,
+                                v.expect("TXN write operation must have a valid value"),
+                            );
+                            (op.to_string(), *k, Option::clone(v))
+                        }
+                    })
+                    .collect();
+                Payload::TxnOk { txn: txn_data }
+            }
         };
 
         // Send response back to client acknowledging the update.
         if matches!(self.role, RaftRole::Leader) {
-            self.out_sender.send(Message {
-                src: raft_id_to_node_id(self.raft_id),
-                dst: log_to_apply.src.clone(),
-                body: Body {
-                    msg_id: None,
-                    in_reply_to: Some(log_to_apply.msg_id),
-                    payload: response_payload,
-                },
-            })?;
+            self.out_sender.send(Message::new(
+                raft_id_to_node_id(self.raft_id),
+                log_to_apply.src.clone(),
+                None,
+                Some(log_to_apply.msg_id),
+                response_payload,
+            ))?;
         }
 
         Ok(())

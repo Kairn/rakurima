@@ -128,6 +128,7 @@ impl Node {
                 next_health_log_time += 3000;
             }
             if get_cur_time_ms() >= next_dump_log_time {
+                // Dump the internal states every 6 seconds.
                 self.raft_core.dump_internal_state();
                 next_dump_log_time += 6000;
             }
@@ -141,7 +142,7 @@ impl Node {
                     Err(e) => {
                         match e {
                             Empty => {
-                                // No more messages at the moment, ignore and go back to sleep.
+                                // No more messages at the moment, proceed to internal housekeeping.
                                 break;
                             }
                             Disconnected => {
@@ -231,8 +232,8 @@ impl Node {
                     bail!("Got broadcast_ok without initialization");
                 }
             }
-            Add { delta } => {
-                self.handle_raft_command(RaftCommand::UpdateCounter { delta }, o_msg)?
+            Add { .. } | Send { .. } | CommitOffsets { .. } | Txn { .. } => {
+                self.handle_raft_command(o_msg)?
             }
             Read {} => {
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
@@ -254,13 +255,6 @@ impl Node {
                     ))?;
                 }
             }
-            Send { ref key, msg } => self.handle_raft_command(
-                RaftCommand::AppendKafkaRecord {
-                    key: key.clone(),
-                    msg,
-                },
-                o_msg,
-            )?,
             Poll { ref offsets } => {
                 let msgs = self.raft_core.get_kafka_records(offsets);
                 self.out_sender.send(Message::into_response(
@@ -268,14 +262,6 @@ impl Node {
                     Payload::PollOk { msgs },
                     None,
                 ))?;
-            }
-            CommitOffsets { ref offsets } => {
-                self.handle_raft_command(
-                    RaftCommand::CommitOffsets {
-                        offsets: offsets.clone(),
-                    },
-                    o_msg,
-                )?;
             }
             ListCommittedOffsets { ref keys } => {
                 let offsets = self.raft_core.get_committed_offsets(keys);
@@ -380,15 +366,8 @@ impl Node {
     ) -> anyhow::Result<()> {
         self.logger
             .log_debug(&format!("Replying to Raft node: {dst} with: {payload:?}"));
-        self.out_sender.send(Message {
-            src: node_id,
-            dst,
-            body: Body {
-                msg_id: None,
-                in_reply_to: None,
-                payload,
-            },
-        })?;
+        self.out_sender
+            .send(Message::new(node_id, dst, None, None, payload))?;
 
         Ok(())
     }
@@ -396,8 +375,19 @@ impl Node {
     /// Handles a potential client request that needs to be replicated via the Raft state machine.
     /// Leader will consume the supplied command, whereas non-leader will forward the message.
     /// During election, the current "incumbent" (no longer the official leader) will response with temporarily-available.
-    fn handle_raft_command(&mut self, command: RaftCommand, msg: Message) -> anyhow::Result<()> {
+    fn handle_raft_command(&mut self, msg: Message) -> anyhow::Result<()> {
         if self.raft_core.get_leader_id() == node_id_to_raft_id(&msg.dst) {
+            let command = match msg.body.payload {
+                Add { delta } => RaftCommand::UpdateCounter { delta },
+                Send { key, msg } => RaftCommand::AppendKafkaRecord { key, msg },
+                CommitOffsets { offsets } => RaftCommand::CommitOffsets { offsets },
+                Txn { txn } => RaftCommand::Txn { txn },
+                _ => {
+                    // Only Raft based update requests are allowed.
+                    unreachable!()
+                }
+            };
+
             if !self
                 .raft_core
                 .accept_new_log(command, msg.src.clone(), msg.body.msg_id)
@@ -407,8 +397,13 @@ impl Node {
                     text: "No leader available to serve at the moment due to pending election"
                         .to_string(),
                 };
-                self.out_sender
-                    .send(Message::into_response(msg, error_payload, None))?;
+                self.out_sender.send(Message::new(
+                    msg.dst,
+                    msg.src,
+                    None,
+                    msg.body.msg_id,
+                    error_payload,
+                ))?;
             }
         } else {
             self.forward_to_leader(msg)?;

@@ -63,15 +63,13 @@ fn main() -> anyhow::Result<()> {
             // Respond to the init message.
             serde_json::to_writer(
                 &mut stdout,
-                &Message {
-                    src: message.dst,
-                    dst: message.src,
-                    body: Body {
-                        msg_id: None,
-                        in_reply_to: message.body.msg_id,
-                        payload: InitOk {},
-                    },
-                },
+                &Message::new(
+                    message.dst,
+                    message.src,
+                    None,
+                    message.body.msg_id,
+                    InitOk {},
+                ),
             )
             .context("Writing init_ok response")?;
             // Write a trailing new line.
