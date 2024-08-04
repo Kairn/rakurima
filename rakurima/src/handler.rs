@@ -82,7 +82,9 @@ impl InputHandler {
             AppendEntries { .. }
             | AppendEntriesResult { .. }
             | RequestVote { .. }
-            | RequestVoteResult { .. } => {
+            | RequestVoteResult { .. }
+            | RaftRequestForward { .. }
+            | RaftRequestAck { .. } => {
                 // Raft internal messages.
                 self.in_sender.send(message)?;
             }

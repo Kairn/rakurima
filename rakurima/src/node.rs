@@ -8,9 +8,9 @@ use std::{
 
 use crate::broadcast;
 use crate::message::{Body, Payload};
-use crate::raft::RaftCommand;
 use crate::raft::RaftCore;
-use crate::util::{get_cur_time_ms, node_id_to_raft_id};
+use crate::raft::{RaftCommand, RaftRequest};
+use crate::util::{get_cur_time_ms, node_id_to_raft_id, raft_id_to_node_id};
 use crate::{
     broadcast::BroadcastCore,
     logger::ServerLogger,
@@ -43,13 +43,19 @@ impl NodeMode {
 pub struct NodeConfig {
     base_pause_time_ms: usize,
     base_broadcast_retry_ms: usize,
+    raft_request_ttl_ms: usize,
 }
 
 impl NodeConfig {
-    pub fn new(base_pause_time_ms: usize, base_broadcast_retry_ms: usize) -> Self {
+    pub fn new(
+        base_pause_time_ms: usize,
+        base_broadcast_retry_ms: usize,
+        raft_request_ttl_ms: usize,
+    ) -> Self {
         Self {
             base_pause_time_ms,
             base_broadcast_retry_ms,
+            raft_request_ttl_ms,
         }
     }
 }
@@ -73,6 +79,10 @@ pub struct Node {
     // Internal cores.
     broadcast_core: Option<BroadcastCore>,
     raft_core: RaftCore,
+
+    // Pending requests to be processed by the `RaftCore`.
+    // Processing requests requires mutability of the `RaftCore`, hence `Node` holds them to avoid borrowing conflict.
+    pending_requests: HashMap<usize, RaftRequest>,
 }
 
 impl Node {
@@ -95,6 +105,7 @@ impl Node {
             next_msg_id: 0,
             broadcast_core: None,
             raft_core,
+            pending_requests: HashMap::new(),
         }
     }
 
@@ -175,6 +186,17 @@ impl Node {
                 }
             }
 
+            // Processing pending Raft requests.
+            let consumed_msg_ids: Vec<usize> = self
+                .pending_requests
+                .iter_mut()
+                .filter_map(|(msg_id, request)| self.raft_core.handle_request(*msg_id, request))
+                .collect();
+
+            for id_to_dequeue in consumed_msg_ids {
+                self.pending_requests.remove(&id_to_dequeue);
+            }
+
             // Do chores on the Raft node.
             let next_msg_id = self.vend_msg_id();
             self.raft_core.run_cycle(next_msg_id)?;
@@ -233,7 +255,33 @@ impl Node {
                 }
             }
             Add { .. } | Send { .. } | CommitOffsets { .. } | Txn { .. } => {
-                self.handle_raft_command(o_msg)?
+                // Enqueue the request.
+                let msg_id = self.vend_msg_id();
+                let command = match o_msg.body.payload {
+                    Payload::Add { delta } => RaftCommand::UpdateCounter { delta },
+                    Payload::Send { key, msg } => RaftCommand::AppendKafkaRecord { key, msg },
+                    Payload::CommitOffsets { offsets } => RaftCommand::CommitOffsets { offsets },
+                    Payload::Txn { txn } => RaftCommand::Txn { txn },
+                    _ => {
+                        // Only Raft based update requests are allowed.
+                        unreachable!()
+                    }
+                };
+
+                let cur_time_ms = get_cur_time_ms();
+                self.pending_requests.insert(
+                    msg_id,
+                    RaftRequest::new(
+                        o_msg.src,
+                        o_msg
+                            .body
+                            .msg_id
+                            .expect("Requests should always have msg_id"),
+                        command,
+                        cur_time_ms,
+                        cur_time_ms + self.config.raft_request_ttl_ms as u128,
+                    ),
+                );
             }
             Read {} => {
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
@@ -328,6 +376,33 @@ impl Node {
                     leader_id,
                     vote_granted,
                     node_id_to_raft_id(&o_msg.src),
+                );
+            }
+            RaftRequestForward {
+                client_id,
+                client_msg_id,
+                command,
+            } => {
+                if self
+                    .raft_core
+                    .accept_new_log(command, client_id, Some(client_msg_id))
+                {
+                    // Send an ack message.
+                    self.out_sender.send(Message::new(
+                        o_msg.dst,
+                        o_msg.src,
+                        None,
+                        o_msg.body.msg_id,
+                        RaftRequestAck {},
+                    ))?;
+                }
+            }
+            RaftRequestAck {} => {
+                self.pending_requests.remove(
+                    &o_msg
+                        .body
+                        .in_reply_to
+                        .expect("RaftRequestAck must have in_reply_to"),
                 );
             }
             _ => {

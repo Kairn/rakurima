@@ -13,7 +13,8 @@ use crate::{
     util::{get_cur_time_ms, jitter, node_id_to_raft_id, raft_id_to_node_id},
 };
 
-// Node `n0` will be the default leader on startup without an explicit election.
+// Node `n0` itself will immediately start an election upon startup.
+// Other nodes in the cluster will "think" `n0` is the leader upon startup.
 const DEF_LEADER_ID: &str = "n0";
 // The number of Kafka records to return pass the given offset.
 const DEF_KAFKA_SIZE: usize = 10;
@@ -27,13 +28,19 @@ pub struct RequestVoteTask {
 pub struct RaftConfig {
     base_election_timeout_ms: usize,
     base_replicate_interval_ms: usize,
+    raft_request_retry_interval_ms: usize,
 }
 
 impl RaftConfig {
-    pub fn new(base_election_timeout_ms: usize, base_replicate_interval_ms: usize) -> Self {
+    pub fn new(
+        base_election_timeout_ms: usize,
+        base_replicate_interval_ms: usize,
+        raft_request_retry_interval_ms: usize,
+    ) -> Self {
         Self {
             base_election_timeout_ms,
             base_replicate_interval_ms,
+            raft_request_retry_interval_ms,
         }
     }
 }
@@ -74,6 +81,33 @@ pub struct RaftLog {
     msg_id: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RaftRequest {
+    client_id: String,
+    client_msg_id: usize,
+    command: RaftCommand,
+    next_retry_time: u128,
+    expire_time: u128,
+}
+
+impl RaftRequest {
+    pub fn new(
+        client_id: String,
+        client_msg_id: usize,
+        command: RaftCommand,
+        next_retry_time: u128,
+        expire_time: u128,
+    ) -> Self {
+        Self {
+            client_id,
+            client_msg_id,
+            command,
+            next_retry_time,
+            expire_time,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RaftCore {
     // Config and metadata.
@@ -90,6 +124,7 @@ pub struct RaftCore {
     voted_for: Option<usize>,
     request_vote_task: Option<RequestVoteTask>,
     logs: Vec<RaftLog>, // Note: this is 1-based indexing.
+    consumed_requests: HashMap<String, HashSet<usize>>, // Dedup forwarded requests.
 
     // Volatile states.
     next_election_time: u128,
@@ -115,13 +150,17 @@ impl RaftCore {
         cluster_size: usize,
         out_sender: Sender<Message>,
     ) -> Self {
-        let role = if node_id == DEF_LEADER_ID {
+        let next_election_time = if node_id == DEF_LEADER_ID {
+            get_cur_time_ms()
+        } else {
+            get_cur_time_ms() + jitter(config.base_election_timeout_ms, Some(2)) as u128
+        };
+
+        let role = if cluster_size <= 1 {
             RaftRole::Leader
         } else {
             RaftRole::Follower
         };
-        let next_election_time =
-            get_cur_time_ms() + jitter(config.base_election_timeout_ms, Some(2)) as u128;
 
         Self {
             raft_id: node_id_to_raft_id(node_id),
@@ -135,6 +174,7 @@ impl RaftCore {
             voted_for: None,
             request_vote_task: None,
             logs: Vec::new(),
+            consumed_requests: HashMap::new(),
             next_election_time,
             commit_index: 0,
             last_applied: 0,
@@ -222,6 +262,61 @@ impl RaftCore {
             .log_debug(&format!("Kafka stream: {:?}.", self.kafka_stream));
     }
 
+    /// Retries the request by consuming as leader or forwarding as a follower.
+    /// Requests that are expired will be evicted (ignored for processing).
+    /// Returns the message ID to be dequeued if consumed successfully or evicted, otherwise `None` is returned.
+    pub fn handle_request(&mut self, msg_id: usize, request: &mut RaftRequest) -> Option<usize> {
+        let cur_time_ms = get_cur_time_ms();
+        if cur_time_ms >= request.expire_time {
+            // Evict requests that are too old.
+            self.logger
+                .log_debug(&format!("Evicting old request: {request:?}."));
+            return Some(msg_id);
+        }
+
+        if cur_time_ms >= request.next_retry_time {
+            // Reset retry time.
+            request.next_retry_time =
+                cur_time_ms + self.config.raft_request_retry_interval_ms as u128;
+            if self.raft_id == self.cur_leader_id {
+                // Attempt to consume the request.
+                if self.accept_new_log(
+                    request.command.clone(),
+                    request.client_id.to_string(),
+                    Some(request.client_msg_id),
+                ) {
+                    Some(msg_id)
+                } else {
+                    // When election is pending, this will be retried later.
+                    None
+                }
+            } else {
+                // Forward to leader.
+                self.logger.log_debug(&format!(
+                    "Forwarding message with ID: {} to leader: {}.",
+                    request.client_msg_id, self.cur_leader_id
+                ));
+
+                // Send and forget (without checking for send error).
+                // This is still error-proof because a request is retried indefinitely until an ack is received.
+                self.out_sender.send(Message::new(
+                    raft_id_to_node_id(self.raft_id),
+                    raft_id_to_node_id(self.cur_leader_id),
+                    Some(msg_id),
+                    None,
+                    Payload::RaftRequestForward {
+                        client_id: request.client_id.to_string(),
+                        client_msg_id: request.client_msg_id,
+                        command: request.command.clone(),
+                    },
+                ));
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     /// Accepts a client update command as the leader.
     /// Response won't be sent until this log is committed and applied.
     /// Returns whether the log has been accepted.
@@ -239,13 +334,30 @@ impl RaftCore {
             return false;
         }
 
+        let msg_id = msg_id.expect("Requests should always have msg_id");
+
+        // Check if the message has been consumed already.
+        if let Some(msg_ids) = self.consumed_requests.get_mut(&src) {
+            if !msg_ids.insert(msg_id) {
+                // Duplicate message, ack will still be sent.
+                self.logger.log_debug(&format!(
+                    "Received duplicated request for client: {src} and msg_id: {msg_id}."
+                ));
+                return true;
+            }
+        } else {
+            let mut msg_ids = HashSet::new();
+            msg_ids.insert(msg_id);
+            self.consumed_requests.insert(src.clone(), msg_ids);
+        }
+
         let log_index = self.logs.len() + 1;
         self.logs.push(RaftLog {
             term: self.cur_term,
             index: log_index,
             command,
             src,
-            msg_id: msg_id.expect("Requests should always have msg_id"),
+            msg_id,
         });
 
         // Update match index for self.

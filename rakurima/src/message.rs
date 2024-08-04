@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::raft::RaftLog;
+use crate::raft::{RaftCommand, RaftLog};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -148,4 +148,10 @@ pub enum Payload {
         leader_id: usize,
         vote_granted: bool,
     },
+    RaftRequestForward {
+        client_id: String,
+        client_msg_id: usize,
+        command: RaftCommand,
+    },
+    RaftRequestAck {},
 }

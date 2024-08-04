@@ -21,6 +21,8 @@ const DEF_BASE_PAUSE_TIME_MS: usize = 10;
 const DEF_BASE_BROADCAST_RETRY_MS: usize = 200;
 const DEF_BASE_ELECTION_TIMEOUT_MS: usize = 3000;
 const DEF_BASE_REPLICATE_INTERVAL_MS: usize = 150;
+const DEF_RAFT_REQUEST_RETRY_INTERVAL_MS: usize = 125;
+const DEF_RAFT_REQUEST_TTL_MS: usize = 6000;
 
 fn main() -> anyhow::Result<()> {
     let logger: &'static ServerLogger = Box::leak(Box::new(ServerLogger {}));
@@ -44,6 +46,13 @@ fn main() -> anyhow::Result<()> {
         "BASE_REPLICATE_INTERVAL_MS",
         DEF_BASE_REPLICATE_INTERVAL_MS,
     );
+    let raft_request_retry_interval_ms = get_numeric_environment_variable(
+        logger,
+        "RAFT_REQUEST_RETRY_INTERVAL_MS",
+        DEF_RAFT_REQUEST_RETRY_INTERVAL_MS,
+    );
+    let raft_request_ttl_ms =
+        get_numeric_environment_variable(logger, "RAFT_REQUEST_TTL_MS", DEF_RAFT_REQUEST_TTL_MS);
 
     let stdin = stdin().lock();
     let mut stdout = stdout().lock();
@@ -76,7 +85,11 @@ fn main() -> anyhow::Result<()> {
             stdout.write_all(b"\n")?;
 
             let raft_core = RaftCore::new(
-                RaftConfig::new(base_election_timeout_ms, base_replicate_interval_ms),
+                RaftConfig::new(
+                    base_election_timeout_ms,
+                    base_replicate_interval_ms,
+                    raft_request_retry_interval_ms,
+                ),
                 node_id.as_str(),
                 node_ids.len(),
                 out_sender.clone(),
@@ -85,7 +98,11 @@ fn main() -> anyhow::Result<()> {
             break Node::new(
                 node_id,
                 NodeMode::from_node_ids(node_ids),
-                NodeConfig::new(base_pause_time_ms, base_broadcast_retry_ms),
+                NodeConfig::new(
+                    base_pause_time_ms,
+                    base_broadcast_retry_ms,
+                    raft_request_ttl_ms,
+                ),
                 logger,
                 in_receiver,
                 out_sender.clone(),
