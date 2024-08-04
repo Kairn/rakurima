@@ -29,6 +29,8 @@ The following environment variables can be supplied to the test program.
 * `BASE_BROADCAST_RETRY_MS` - The (base) timeout in milliseconds before a broadcast is retried, default to 200.
 * `BASE_ELECTION_TIMEOUT_MS` - The (base) timeout in milliseconds before a raft node holds a new election without receiving replication call, default to 3000.
 * `BASE_REPLICATE_INTERVAL_MS` - The time in milliseconds between replication RPCs for leader, default to 150. No jitter is applied currently.
+* `RAFT_REQUEST_RETRY_INTERVAL_MS` - The time in milliseconds between Raft request retries, default to 125.
+* `RAFT_REQUEST_TTL_MS` - The time in milliseconds for how long can a queued Raft request live before being dropped, default to 6000.
 
 The following workloads are currently supported. (More in progress)
 
@@ -61,7 +63,12 @@ The following workloads are currently supported. (More in progress)
 ```
 ./maelstrom/maelstrom test -w kafka --bin ./rakurima/target/debug/server --node-count 7 --concurrency 2n --time-limit 90 --rate 500 --latency 50 --nemesis partition
 ```
-**Note:** Currently Maelstrom frequently produces internal exceptions during validation analysis at the end, which seems to be unrelated to the implementation code, though no anomalies are detected. Removing the `--nemesis partition` will produce stable results.
+**Note:** Currently unstable under network partition. Removing the `--nemesis partition` will produce stable results.
+
+### Transaction RW Register
+```
+./maelstrom/maelstrom test -w txn-rw-register --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 45 --rate 1000 --consistency-models read-committed --availability total --nemesis partition
+```
 
 ## Design
 Rakurima is designed to be an all-encompassing and non-blocking server that handles Maelstrom workloads with partition tolerance.

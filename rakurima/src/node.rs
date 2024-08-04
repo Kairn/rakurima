@@ -257,31 +257,52 @@ impl Node {
             Add { .. } | Send { .. } | CommitOffsets { .. } | Txn { .. } => {
                 // Enqueue the request.
                 let msg_id = self.vend_msg_id();
-                let command = match o_msg.body.payload {
-                    Payload::Add { delta } => RaftCommand::UpdateCounter { delta },
-                    Payload::Send { key, msg } => RaftCommand::AppendKafkaRecord { key, msg },
-                    Payload::CommitOffsets { offsets } => RaftCommand::CommitOffsets { offsets },
-                    Payload::Txn { txn } => RaftCommand::Txn { txn },
+                let (command, response_payload) = match o_msg.body.payload {
+                    Payload::Add { delta } => (RaftCommand::UpdateCounter { delta }, None),
+                    Payload::Send { key, msg } => {
+                        (RaftCommand::AppendKafkaRecord { key, msg }, None)
+                    }
+                    Payload::CommitOffsets { offsets } => {
+                        (RaftCommand::CommitOffsets { offsets }, None)
+                    }
+                    Payload::Txn { txn } => {
+                        // Return data immediately to the client to maintain availability.
+                        // Writes are only eventually consistent.
+                        let txn_ro_data = self.raft_core.get_txn_ro_data(&txn);
+                        (RaftCommand::Txn { txn }, Some(TxnOk { txn: txn_ro_data }))
+                    }
                     _ => {
                         // Only Raft based update requests are allowed.
                         unreachable!()
                     }
                 };
 
+                let msg_id = o_msg
+                    .body
+                    .msg_id
+                    .expect("Requests should always have msg_id");
                 let cur_time_ms = get_cur_time_ms();
                 self.pending_requests.insert(
                     msg_id,
                     RaftRequest::new(
-                        o_msg.src,
-                        o_msg
-                            .body
-                            .msg_id
-                            .expect("Requests should always have msg_id"),
+                        o_msg.src.clone(),
+                        msg_id,
                         command,
                         cur_time_ms,
                         cur_time_ms + self.config.raft_request_ttl_ms as u128,
                     ),
                 );
+
+                // Respond immediately for certain requests if update doesn't have to be committed right away.
+                if let Some(response_payload) = response_payload {
+                    self.out_sender.send(Message::new(
+                        o_msg.dst,
+                        o_msg.src,
+                        None,
+                        Some(msg_id),
+                        response_payload,
+                    ))?;
+                }
             }
             Read {} => {
                 if let Some(ref mut broadcast_core) = self.broadcast_core {
@@ -304,12 +325,17 @@ impl Node {
                 }
             }
             Poll { ref offsets } => {
-                let msgs = self.raft_core.get_kafka_records(offsets);
-                self.out_sender.send(Message::into_response(
-                    o_msg,
-                    Payload::PollOk { msgs },
-                    None,
-                ))?;
+                if self.raft_core.get_leader_id() == node_id_to_raft_id(&o_msg.dst) {
+                    let msgs = self.raft_core.get_kafka_records(offsets);
+                    self.out_sender.send(Message::into_response(
+                        o_msg,
+                        Payload::PollOk { msgs },
+                        None,
+                    ))?;
+                } else {
+                    // Kafka polls are always forwarded to prevent clients from committing without getting the latest data.
+                    self.forward_to_leader(o_msg)?;
+                }
             }
             ListCommittedOffsets { ref keys } => {
                 let offsets = self.raft_core.get_committed_offsets(keys);

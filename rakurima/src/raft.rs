@@ -763,7 +763,7 @@ impl RaftCore {
         let response_payload = match &log_to_apply.command {
             UpdateCounter { delta } => {
                 self.pn_counter_value += delta;
-                Payload::AddOk {}
+                Some(Payload::AddOk {})
             }
             AppendKafkaRecord { key, msg } => {
                 let cur_records = self
@@ -771,9 +771,9 @@ impl RaftCore {
                     .entry(key.to_string())
                     .and_modify(|records| records.push(*msg))
                     .or_insert(vec![*msg]);
-                Payload::SendOk {
+                Some(Payload::SendOk {
                     offset: cur_records.len().saturating_sub(1), // Offset should be the `len` before the insert.
-                }
+                })
             }
             CommitOffsets { offsets } => {
                 offsets.iter().for_each(|(key, offset)| {
@@ -782,39 +782,52 @@ impl RaftCore {
                         .and_modify(|v| *v = max(*v, *offset))
                         .or_insert(*offset);
                 });
-                Payload::CommitOffsetsOk {}
+                Some(Payload::CommitOffsetsOk {})
             }
             Txn { txn } => {
-                let txn_data = txn
-                    .iter()
-                    .map(|(op, k, v)| {
-                        // Operation is either "r" or "w".
-                        if op == "r" {
-                            (op.to_string(), *k, self.kv_store.get(k).copied())
-                        } else {
-                            self.kv_store.insert(
-                                *k,
-                                v.expect("TXN write operation must have a valid value"),
-                            );
-                            (op.to_string(), *k, Option::clone(v))
-                        }
-                    })
-                    .collect();
-                Payload::TxnOk { txn: txn_data }
+                txn.iter().for_each(|(op, k, v)| {
+                    // Writes only.
+                    // Reads are returned to client upon request.
+                    if op == "w" {
+                        self.kv_store
+                            .insert(*k, v.expect("TXN write operation must have a valid value"));
+                    }
+                });
+                None
             }
         };
 
         // Send response back to client acknowledging the update.
         if matches!(self.role, RaftRole::Leader) {
-            self.out_sender.send(Message::new(
-                raft_id_to_node_id(self.raft_id),
-                log_to_apply.src.clone(),
-                None,
-                Some(log_to_apply.msg_id),
-                response_payload,
-            ))?;
+            if let Some(response_payload) = response_payload {
+                self.out_sender.send(Message::new(
+                    raft_id_to_node_id(self.raft_id),
+                    log_to_apply.src.clone(),
+                    None,
+                    Some(log_to_apply.msg_id),
+                    response_payload,
+                ))?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Returns a read-only view for a transaction.
+    /// Writes will NOT be committed.
+    pub fn get_txn_ro_data(
+        &self,
+        txn: &[(String, i32, Option<i32>)],
+    ) -> Vec<(String, i32, Option<i32>)> {
+        txn.iter()
+            .map(|(op, k, v)| {
+                if op == "r" {
+                    (op.to_string(), *k, self.kv_store.get(k).copied())
+                } else {
+                    // Writes are echoed only.
+                    (op.to_string(), *k, Option::clone(v))
+                }
+            })
+            .collect()
     }
 }
