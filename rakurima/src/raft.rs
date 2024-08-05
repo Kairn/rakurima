@@ -106,6 +106,10 @@ impl RaftRequest {
             expire_time,
         }
     }
+
+    pub fn can_retry(&self) -> bool {
+        matches!(self.command, RaftCommand::Txn { .. })
+    }
 }
 
 #[derive(Debug)]

@@ -197,6 +197,8 @@ impl Node {
                 self.pending_requests.remove(&id_to_dequeue);
             }
 
+            self.pending_requests.retain(|_, req| req.can_retry());
+
             // Do chores on the Raft node.
             let next_msg_id = self.vend_msg_id();
             self.raft_core.run_cycle(next_msg_id)?;
@@ -326,12 +328,18 @@ impl Node {
             }
             Poll { ref offsets } => {
                 if self.raft_core.get_leader_id() == node_id_to_raft_id(&o_msg.dst) {
-                    let msgs = self.raft_core.get_kafka_records(offsets);
-                    self.out_sender.send(Message::into_response(
-                        o_msg,
-                        Payload::PollOk { msgs },
-                        None,
-                    ))?;
+                    if (self.raft_core.is_leader()) {
+                        let msgs = self.raft_core.get_kafka_records(offsets);
+                        self.out_sender.send(Message::into_response(
+                            o_msg,
+                            Payload::PollOk { msgs },
+                            None,
+                        ))?;
+                    } else {
+                        // Force client to retry.
+                        self.logger
+                            .log_debug("Dropping Kafka poll due to unresolved election.");
+                    }
                 } else {
                     // Kafka polls are always forwarded to prevent clients from committing without getting the latest data.
                     self.forward_to_leader(o_msg)?;

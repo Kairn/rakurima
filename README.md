@@ -56,18 +56,18 @@ The following workloads are currently supported. (More in progress)
 
 ### PN Counter (complex)
 ```
-./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 7 --rate 100 --time-limit 60 --latency 75 --nemesis partition
+./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 3 --rate 500 --time-limit 70 --latency 20 --nemesis partition --nemesis-interval 20
 ```
 
 ### Kafka
 ```
-./maelstrom/maelstrom test -w kafka --bin ./rakurima/target/debug/server --node-count 7 --concurrency 2n --time-limit 90 --rate 500 --latency 50 --nemesis partition
+./maelstrom/maelstrom test -w kafka --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 70 --rate 500 --latency 20 --nemesis partition --nemesis-interval 20
 ```
-**Note:** Currently unstable under network partition. Removing the `--nemesis partition` will produce stable results.
+**Note:** Currently unstable under network partition. Removing `--nemesis partition` will produce stable results.
 
 ### Transaction RW Register
 ```
-./maelstrom/maelstrom test -w txn-rw-register --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 45 --rate 1000 --consistency-models read-committed --availability total --nemesis partition
+./maelstrom/maelstrom test -w txn-rw-register --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 70 --rate 1000 --consistency-models read-committed --availability total --nemesis partition --nemesis-interval 20
 ```
 
 ## Design
