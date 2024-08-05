@@ -39,22 +39,15 @@ The following workloads are currently supported. (More in progress)
 ./maelstrom/maelstrom test -w echo --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
 ```
 
-### Broadcast (simple)
-```
-./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10 --rate 10
-```
+### Unique ID Generation
+TODO
 
-### Broadcast (complex)
+### Message Broadcast
 ```
 ./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 25 --time-limit 30 --rate 100 --latency 100 --nemesis partition
 ```
 
-### PN Counter (simple)
-```
-./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 1 --time-limit 10
-```
-
-### PN Counter (complex)
+### PN Counter
 ```
 ./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 3 --rate 500 --time-limit 70 --latency 20 --nemesis partition --nemesis-interval 20
 ```

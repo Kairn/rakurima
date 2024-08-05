@@ -107,8 +107,10 @@ impl RaftRequest {
         }
     }
 
+    // Determines if a request can be retried.
+    // Currently exclude Kafka commands from retrying.
     pub fn can_retry(&self) -> bool {
-        matches!(self.command, RaftCommand::Txn { .. })
+        matches!(self.command, UpdateCounter { .. } | Txn { .. })
     }
 }
 
@@ -767,7 +769,7 @@ impl RaftCore {
         let response_payload = match &log_to_apply.command {
             UpdateCounter { delta } => {
                 self.pn_counter_value += delta;
-                Some(Payload::AddOk {})
+                None
             }
             AppendKafkaRecord { key, msg } => {
                 let cur_records = self
@@ -802,6 +804,7 @@ impl RaftCore {
         };
 
         // Send response back to client acknowledging the update.
+        // Non-Kafka commands should have been acknowledged upon client RPC.
         if matches!(self.role, RaftRole::Leader) {
             if let Some(response_payload) = response_payload {
                 self.out_sender.send(Message::new(

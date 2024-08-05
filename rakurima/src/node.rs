@@ -260,7 +260,10 @@ impl Node {
                 // Enqueue the request.
                 let msg_id = self.vend_msg_id();
                 let (command, response_payload) = match o_msg.body.payload {
-                    Payload::Add { delta } => (RaftCommand::UpdateCounter { delta }, None),
+                    Payload::Add { delta } => {
+                        (RaftCommand::UpdateCounter { delta }, Some(AddOk {}))
+                    }
+                    // The following 2 Kafka RPCs are only responded once committed.
                     Payload::Send { key, msg } => {
                         (RaftCommand::AppendKafkaRecord { key, msg }, None)
                     }

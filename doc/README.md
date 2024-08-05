@@ -41,7 +41,7 @@ Rakurima supports a large subset of the Maelstrom workloads. And it should be ea
 ### Echo
 The most basic workload, can be used to test setup and as a shallow health check. Each node receiving the echo request responds immediately to the client without any other cross communication.
 
-### Unique ID
+### Unique ID Generation
 This workload requests unique IDs from the server. For simplicity, we don't rely on the internal state machine to build consensus. Instead, each node generates IDs independently using a similar approach to the [Snowflake](https://blog.x.com/engineering/en_us/a/2010/announcing-snowflake) algorithm. The generated ID is a 64-bit string (Hex encoded). In this case, since there are only nodes without data centers, we use 47 bits for timestamp (Epoch milliseconds) + 7 bits for the node ID, and 10 bits for a sequence number stored on each node that increments. The sequence ID wraps once reached maximum. This means we can support over 1 million IDs per node per second on average without creating a conflict.
 
 ### Message Broadcast
