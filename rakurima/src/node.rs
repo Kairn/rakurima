@@ -1,23 +1,22 @@
-use std::collections::{HashMap, HashSet};
+use crate::message::Payload;
+use crate::raft::RaftCore;
+use crate::raft::{RaftCommand, RaftRequest};
+use crate::uid::UidCore;
+use crate::util::{get_cur_time_ms, node_id_to_raft_id};
+use crate::{
+    broadcast::BroadcastCore,
+    logger::ServerLogger,
+    message::{Message, Payload::*},
+    util::jitter,
+};
+use anyhow::bail;
+use std::collections::HashMap;
 use std::sync::mpsc::TryRecvError::{Disconnected, Empty};
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread,
     time::Duration,
 };
-
-use crate::broadcast;
-use crate::message::{Body, Payload};
-use crate::raft::RaftCore;
-use crate::raft::{RaftCommand, RaftRequest};
-use crate::util::{get_cur_time_ms, node_id_to_raft_id, raft_id_to_node_id};
-use crate::{
-    broadcast::BroadcastCore,
-    logger::ServerLogger,
-    message::{self, Message, Payload::*},
-    util::jitter,
-};
-use anyhow::bail;
 
 /// Mode of operation for the server node.
 /// In `Cluster` mode, an embedded list of peers is included.
@@ -30,7 +29,7 @@ pub enum NodeMode {
 impl NodeMode {
     /// Constructs the NodeMode based on the list of neighbors.
     pub fn from_node_ids(node_ids: Vec<String>) -> Self {
-        if (node_ids.len() > 1) {
+        if node_ids.len() > 1 {
             NodeMode::Cluster(node_ids)
         } else {
             NodeMode::Singleton
@@ -77,6 +76,7 @@ pub struct Node {
     next_msg_id: usize,
 
     // Internal cores.
+    uid_core: UidCore,
     broadcast_core: Option<BroadcastCore>,
     raft_core: RaftCore,
 
@@ -95,6 +95,7 @@ impl Node {
         out_sender: Sender<Message>,
         raft_core: RaftCore,
     ) -> Self {
+        let uid_core = UidCore::new(&node_id);
         Self {
             node_id,
             mode,
@@ -103,6 +104,7 @@ impl Node {
             in_receiver,
             out_sender,
             next_msg_id: 0,
+            uid_core,
             broadcast_core: None,
             raft_core,
             pending_requests: HashMap::new(),
@@ -148,7 +150,7 @@ impl Node {
             loop {
                 match self.in_receiver.try_recv() {
                     Ok(message) => {
-                        self.process_message(message);
+                        self.process_message(message)?;
                     }
                     Err(e) => {
                         match e {
@@ -208,12 +210,18 @@ impl Node {
             ));
         }
 
-        Ok(())
+        // Unreachable here.
     }
 
     /// Helper function to process the message.
     fn process_message(&mut self, mut o_msg: Message) -> anyhow::Result<()> {
         match o_msg.body.payload {
+            Generate {} => {
+                let id = self.uid_core.generate();
+                self.logger.log_debug(&format!("Generated UID: {id}."));
+                self.out_sender
+                    .send(Message::into_response(o_msg, GenerateOk { id }, None))?;
+            }
             Topology { ref mut topology } => {
                 let neighbors = topology
                     .remove(&self.node_id)
@@ -222,7 +230,8 @@ impl Node {
                 self.logger.log_debug(&format!(
                     "Acknowledged broadcast neighbors: {neighbors:?} from Topology message."
                 ));
-                self.broadcast_core
+                let _ = self
+                    .broadcast_core
                     .insert(BroadcastCore::new(neighbors, self.is_singleton()));
 
                 // Send out the ack message on Topology.
@@ -260,9 +269,7 @@ impl Node {
                 // Enqueue the request.
                 let msg_id = self.vend_msg_id();
                 let (command, response_payload) = match o_msg.body.payload {
-                    Payload::Add { delta } => {
-                        (RaftCommand::UpdateCounter { delta }, Some(AddOk {}))
-                    }
+                    Payload::Add { delta } => (RaftCommand::UpdateCounter { delta }, None),
                     // The following 2 Kafka RPCs are only responded once committed.
                     Payload::Send { key, msg } => {
                         (RaftCommand::AppendKafkaRecord { key, msg }, None)
@@ -282,7 +289,7 @@ impl Node {
                     }
                 };
 
-                let msg_id = o_msg
+                let client_msg_id = o_msg
                     .body
                     .msg_id
                     .expect("Requests should always have msg_id");
@@ -291,7 +298,7 @@ impl Node {
                     msg_id,
                     RaftRequest::new(
                         o_msg.src.clone(),
-                        msg_id,
+                        client_msg_id,
                         command,
                         cur_time_ms,
                         cur_time_ms + self.config.raft_request_ttl_ms as u128,
@@ -304,7 +311,7 @@ impl Node {
                         o_msg.dst,
                         o_msg.src,
                         None,
-                        Some(msg_id),
+                        Some(client_msg_id),
                         response_payload,
                     ))?;
                 }
@@ -331,7 +338,7 @@ impl Node {
             }
             Poll { ref offsets } => {
                 if self.raft_core.get_leader_id() == node_id_to_raft_id(&o_msg.dst) {
-                    if (self.raft_core.is_leader()) {
+                    if self.raft_core.is_leader() {
                         let msgs = self.raft_core.get_kafka_records(offsets);
                         self.out_sender.send(Message::into_response(
                             o_msg,
@@ -480,46 +487,6 @@ impl Node {
             .log_debug(&format!("Replying to Raft node: {dst} with: {payload:?}"));
         self.out_sender
             .send(Message::new(node_id, dst, None, None, payload))?;
-
-        Ok(())
-    }
-
-    /// Handles a potential client request that needs to be replicated via the Raft state machine.
-    /// Leader will consume the supplied command, whereas non-leader will forward the message.
-    /// During election, the current "incumbent" (no longer the official leader) will response with temporarily-available.
-    fn handle_raft_command(&mut self, msg: Message) -> anyhow::Result<()> {
-        if self.raft_core.get_leader_id() == node_id_to_raft_id(&msg.dst) {
-            let command = match msg.body.payload {
-                Add { delta } => RaftCommand::UpdateCounter { delta },
-                Send { key, msg } => RaftCommand::AppendKafkaRecord { key, msg },
-                CommitOffsets { offsets } => RaftCommand::CommitOffsets { offsets },
-                Txn { txn } => RaftCommand::Txn { txn },
-                _ => {
-                    // Only Raft based update requests are allowed.
-                    unreachable!()
-                }
-            };
-
-            if !self
-                .raft_core
-                .accept_new_log(command, msg.src.clone(), msg.body.msg_id)
-            {
-                let error_payload = Payload::Error {
-                    code: 11, // `temporarily-unavailable` in Maelstrom.
-                    text: "No leader available to serve at the moment due to pending election"
-                        .to_string(),
-                };
-                self.out_sender.send(Message::new(
-                    msg.dst,
-                    msg.src,
-                    None,
-                    msg.body.msg_id,
-                    error_payload,
-                ))?;
-            }
-        } else {
-            self.forward_to_leader(msg)?;
-        }
 
         Ok(())
     }

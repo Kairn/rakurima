@@ -95,6 +95,7 @@ fn main() -> anyhow::Result<()> {
                 out_sender.clone(),
             );
 
+            // Break since init has completed.
             break Node::new(
                 node_id,
                 NodeMode::from_node_ids(node_ids),

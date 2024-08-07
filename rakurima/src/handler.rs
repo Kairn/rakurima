@@ -1,16 +1,16 @@
 use std::{
-    any::Any,
-    io::{stdin, stdout, StdinLock, Write},
+    io::{stdin, stdout, Write},
     sync::mpsc::{Receiver, Sender},
 };
 
 use crate::{
-    logger::{self, ServerLogger},
-    message::{self, Body, Message, Payload::*},
+    logger::ServerLogger,
+    message::{Message, Payload::*},
 };
 
 #[derive(Debug)]
 pub struct InputHandler {
+    #[allow(dead_code)]
     node_id: String,
     logger: &'static ServerLogger,
     in_sender: Sender<Message>,
@@ -42,7 +42,7 @@ impl InputHandler {
                 Ok(message) => {
                     self.handle_message(message)?;
                 }
-                Err(e) => {
+                Err(_) => {
                     self.logger
                         .log_debug("Unsupported or malformed input line ignored.");
                 }
@@ -52,6 +52,8 @@ impl InputHandler {
         Ok(())
     }
 
+    /// Performs message specific action(s).
+    /// Most messages are forwarded to the server node.
     fn handle_message(&mut self, message: Message) -> anyhow::Result<()> {
         match &message.body.payload {
             Error { code, text } => {
@@ -65,7 +67,8 @@ impl InputHandler {
                 self.out_sender
                     .send(Message::into_response(message, EchoOk { echo }, None))?
             }
-            Topology { .. }
+            Generate { .. }
+            | Topology { .. }
             | Broadcast { .. }
             | BroadcastOk {}
             | Read {}
@@ -109,7 +112,9 @@ impl InputHandler {
 
 #[derive(Debug)]
 pub struct OutputHandler {
+    #[allow(dead_code)]
     node_id: String,
+    #[allow(dead_code)]
     logger: &'static ServerLogger,
     out_receiver: Receiver<Message>,
 }

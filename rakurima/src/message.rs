@@ -55,6 +55,7 @@ pub struct Body {
     pub payload: Payload,
 }
 
+/// Include all variants of the message payload that can be exchanged among clients and server nodes for supported workloads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
@@ -73,6 +74,10 @@ pub enum Payload {
     },
     EchoOk {
         echo: String,
+    },
+    Generate {},
+    GenerateOk {
+        id: String,
     },
     Topology {
         topology: HashMap<String, Vec<String>>,

@@ -108,9 +108,8 @@ impl RaftRequest {
     }
 
     // Determines if a request can be retried.
-    // Currently exclude Kafka commands from retrying.
     pub fn can_retry(&self) -> bool {
-        matches!(self.command, UpdateCounter { .. } | Txn { .. })
+        matches!(self.command, Txn { .. })
     }
 }
 
@@ -305,7 +304,7 @@ impl RaftCore {
 
                 // Send and forget (without checking for send error).
                 // This is still error-proof because a request is retried indefinitely until an ack is received.
-                self.out_sender.send(Message::new(
+                let _ = self.out_sender.send(Message::new(
                     raft_id_to_node_id(self.raft_id),
                     raft_id_to_node_id(self.cur_leader_id),
                     Some(msg_id),
@@ -507,7 +506,7 @@ impl RaftCore {
                 if last_log_index < *follower_next_index {
                     *follower_next_index = last_log_index;
                 } else {
-                    follower_next_index.saturating_sub(1); // At least decrement 1.
+                    let _ = follower_next_index.saturating_sub(1); // At least decrement 1.
                 }
                 // Next index cannot be less than 1.
                 *follower_next_index = max(*follower_next_index, 1);
@@ -565,7 +564,7 @@ impl RaftCore {
             self.logger.log_debug(&format!(
                 "Granting vote to candidate: {candidate_id} for term: {term}."
             ));
-            self.voted_for.insert(candidate_id);
+            let _ = self.voted_for.insert(candidate_id);
             // Reset election timeout to give chance for the current election to finish.
             self.reset_election_timeout();
             Payload::RequestVoteResult {
@@ -611,6 +610,7 @@ impl RaftCore {
         voter_id: usize,
     ) {
         if !vote_granted || term != self.cur_term {
+            self.maybe_convert_to_follower(term, leader_id);
             return;
         }
 
@@ -749,7 +749,7 @@ impl RaftCore {
 
         // Apply committed log entries.
         for log_index in (self.last_applied + 1)..(self.commit_index + 1) {
-            self.apply_log(log_index);
+            self.apply_log(log_index)?;
         }
         self.last_applied = max(self.last_applied, self.commit_index);
 
@@ -769,7 +769,7 @@ impl RaftCore {
         let response_payload = match &log_to_apply.command {
             UpdateCounter { delta } => {
                 self.pn_counter_value += delta;
-                None
+                Some(Payload::AddOk {})
             }
             AppendKafkaRecord { key, msg } => {
                 let cur_records = self

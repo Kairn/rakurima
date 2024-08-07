@@ -32,7 +32,7 @@ The following environment variables can be supplied to the test program.
 * `RAFT_REQUEST_RETRY_INTERVAL_MS` - The time in milliseconds between Raft request retries, default to 125.
 * `RAFT_REQUEST_TTL_MS` - The time in milliseconds for how long can a queued Raft request live before being dropped, default to 6000.
 
-The following workloads are currently supported. (More in progress)
+The following workloads are currently supported.
 
 ### Echo
 ```
@@ -40,27 +40,29 @@ The following workloads are currently supported. (More in progress)
 ```
 
 ### Unique ID Generation
-TODO
+```
+./maelstrom/maelstrom test -w unique-ids --bin ./rakurima/target/debug/server --time-limit 40 --rate 1000 --node-count 25 --availability total --nemesis partition
+```
 
 ### Message Broadcast
 ```
-./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 25 --time-limit 30 --rate 100 --latency 100 --nemesis partition
+./maelstrom/maelstrom test -w broadcast --bin ./rakurima/target/debug/server --node-count 25 --time-limit 30 --rate 300 --latency 50 --nemesis partition
 ```
 
 ### PN Counter
 ```
-./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 3 --rate 500 --time-limit 70 --latency 20 --nemesis partition --nemesis-interval 20
+./maelstrom/maelstrom test -w pn-counter --bin ./rakurima/target/debug/server --node-count 3 --rate 500 --time-limit 50 --latency 20 --nemesis partition --nemesis-interval 20
 ```
 
 ### Kafka
 ```
-./maelstrom/maelstrom test -w kafka --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 70 --rate 500 --latency 20 --nemesis partition --nemesis-interval 20
+./maelstrom/maelstrom test -w kafka --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 50 --rate 500 --latency 20 --nemesis partition --nemesis-interval 20
 ```
 **Note:** Currently unstable under network partition. Removing `--nemesis partition` will produce stable results.
 
 ### Transaction RW Register
 ```
-./maelstrom/maelstrom test -w txn-rw-register --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 70 --rate 1000 --consistency-models read-committed --availability total --nemesis partition --nemesis-interval 20
+./maelstrom/maelstrom test -w txn-rw-register --bin ./rakurima/target/debug/server --node-count 3 --concurrency 2n --time-limit 50 --rate 1000 --consistency-models read-committed --availability total --nemesis partition --nemesis-interval 20
 ```
 
 ## Design

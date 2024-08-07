@@ -1,10 +1,7 @@
 use crate::message::Payload::{self, *};
 use std::collections::{hash_map::ValuesMut, HashMap, HashSet};
 
-use crate::{
-    message::{Body, Message},
-    util::get_cur_time_ms,
-};
+use crate::{message::Message, util::get_cur_time_ms};
 
 #[derive(Debug, Clone)]
 pub struct BroadcastTask {
@@ -24,10 +21,12 @@ impl BroadcastTask {
         }
     }
 
+    /// Retrieves the content of the broadcast message.
     pub fn get_content(&self) -> i32 {
         self.content
     }
 
+    /// Removes the given node from the list of recipients after message is acknowledged from it.
     pub fn remove_recipient(&mut self, recipient: &str) {
         self.recipients.remove(recipient);
     }
@@ -81,6 +80,8 @@ impl BroadcastCore {
         }
     }
 
+    /// Retrieves all broadcast tasks.
+    /// Tasks are mutable.
     pub fn tasks(&mut self) -> ValuesMut<'_, usize, BroadcastTask> {
         self.tasks.values_mut()
     }
@@ -114,6 +115,7 @@ impl BroadcastCore {
         self.tasks.retain(|_, v| !v.recipients.is_empty())
     }
 
+    /// Generates a payload that contains all received broadcast values.
     pub fn generate_read_payload(&self) -> Payload {
         Payload::ReadOk {
             messages: Some(Vec::from_iter(self.messages.iter().cloned())),
